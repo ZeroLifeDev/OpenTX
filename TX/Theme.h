@@ -50,4 +50,14 @@
 #define CELL_W (SCREEN_WIDTH / GRID_COLS)
 #define CELL_H (SCREEN_HEIGHT / GRID_ROWS)
 
+// ==========================================
+//          BACKWARD COMPATIBILITY
+// ==========================================
+#define COLOR_BG_DARK    COLOR_BG_MAIN
+#define COLOR_ACCENT     COLOR_ACCENT_1
+#define COLOR_HIGHLIGHT  COLOR_ACCENT_2
+
+#define FONT_SMALL       FONT_LABEL
+#define FONT_BODY        FONT_LABEL
+
 #endif // THEME_H

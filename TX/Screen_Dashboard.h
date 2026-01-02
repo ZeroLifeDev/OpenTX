@@ -66,9 +66,9 @@ public:
         sprite->fillSprite(COLOR_BG_MAIN);
         
         // Draw Grid
-        sprite->setColor(COLOR_BG_SHADOW);
-        for (int x=0; x<SCREEN_WIDTH; x+=CELL_W) sprite->drawFastVLine(x, 0, SCREEN_HEIGHT);
-        for (int y=0; y<SCREEN_HEIGHT; y+=CELL_H) sprite->drawFastHLine(0, y, SCREEN_WIDTH);
+        // sprite->setColor(COLOR_BG_SHADOW); // Deleted, not supported
+        for (int x=0; x<SCREEN_WIDTH; x+=CELL_W) sprite->drawFastVLine(x, 0, SCREEN_HEIGHT, COLOR_BG_SHADOW);
+        for (int y=0; y<SCREEN_HEIGHT; y+=CELL_H) sprite->drawFastHLine(0, y, SCREEN_WIDTH, COLOR_BG_SHADOW);
         
         // Draw Scanning Line (Cyber Effect)
         sprite->drawFastHLine(0, state.bgScan.y(), SCREEN_WIDTH, COLOR_ACCENT_2);
