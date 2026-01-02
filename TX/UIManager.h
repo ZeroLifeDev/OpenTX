@@ -6,6 +6,7 @@
 #include "Screen_Intro.h"
 #include "Screen_Dashboard.h"
 #include "Screen_Debug.h"
+#include "Screen_Popup.h"
 #include "SoundManager.h"
 
 // Enum for Screen States
@@ -33,6 +34,14 @@ public:
 // UIManager is better for UI feedback.
 
     void update() {
+        // Priority: Popup Update
+        if (screenPopup.isVisible()) {
+            screenPopup.update();
+            // Don't block background updates entirely if we want live bg, 
+            // but for inputs we might want to block? 
+            // Let's allow background updates but block input parsing for screen switching.
+        }
+
         // Sound Feedback for Trim (Check Edge)
         if (inputManager.currentState.btnTrimPlus && !inputManager.lastState.btnTrimPlus) {
              soundManager.beepClick();
@@ -41,9 +50,15 @@ public:
              soundManager.beepClick();
         }
         
-        // Sound Feedback for Gyro
+        // Sound Feedback & Cutscene for Gyro
         if (inputManager.currentState.swGyro != inputManager.lastState.swGyro) {
-             soundManager.beepClick();
+             if (inputManager.currentState.swGyro) {
+                 soundManager.playGyroOn();
+                 screenPopup.show("GYRO SYSTEM", "ENGAGED", 1500, COLOR_ACCENT);
+             } else {
+                 soundManager.playGyroOff();
+                 screenPopup.show("GYRO SYSTEM", "DISABLED", 1500, COLOR_ACCENT_ALT);
+             }
         }
 
         switch (currentScreen) {
@@ -55,24 +70,29 @@ public:
                 break;
                 
             case SCREEN_MAIN:
-                // Switch to Debug on Menu Button Press
-                if (inputManager.isMenuPressed()) {
-                    soundManager.beepConfirm();
-                    currentScreen = SCREEN_DEBUG;
-                }
-                // Use SET button to Reset Trim
-                if (inputManager.isSetPressed()) {
-                    soundManager.beep();
-                    inputManager.internalTrim = 0;
+                if (!screenPopup.isVisible()) {
+                    // Switch to Debug on Menu Button Press
+                    if (inputManager.isMenuPressed()) {
+                        soundManager.beepConfirm();
+                        currentScreen = SCREEN_DEBUG;
+                    }
+                    // Use SET button to Reset Trim
+                    if (inputManager.isSetPressed()) {
+                        soundManager.beep();
+                        inputManager.internalTrim = 0;
+                        screenPopup.show("TRIM RESET", "CENTERED", 1000, COLOR_HIGHLIGHT);
+                    }
                 }
                 break;
                 
             case SCREEN_DEBUG:
                 screenDebug.update();
-                // Exit Debug on Menu Button Press
-                if (inputManager.isMenuPressed()) {
-                    soundManager.beepConfirm();
-                    currentScreen = SCREEN_MAIN;
+                if (!screenPopup.isVisible()) {
+                    // Exit Debug on Menu Button Press
+                    if (inputManager.isMenuPressed()) {
+                        soundManager.beepConfirm();
+                        currentScreen = SCREEN_MAIN;
+                    }
                 }
                 break;
         }
@@ -93,6 +113,11 @@ public:
             case SCREEN_DEBUG:
                 screenDebug.draw(&displayManager);
                 break;
+        }
+
+        // Draw Overlay Layer
+        if (screenPopup.isVisible()) {
+            screenPopup.draw(&displayManager);
         }
 
         displayManager.endFrame();

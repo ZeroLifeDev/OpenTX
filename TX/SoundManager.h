@@ -28,44 +28,59 @@ public:
     // Play a gentle tone
     // Freq: Hz
     // Duration: ms
-    // Volume: 0-255 (Keep low for "Quiet")
-    void playTone(int freq, int duration, int volume = 10) {
+    // Volume: 0-255 (Duty Cycle). For max loudness on passive buzzer, use 127 (50%).
+    void playTone(int freq, int duration, int volume = 127) {
         if (!enabled) return;
         
-        // Update Frequency
-        // In 3.0, we can re-attach or use ledcChangeFrequency if available, 
-        // but simplest compatible way is often just re-attach or ledcWriteTone (if we didn't want volume).
-        // To control volume (duty), we need manual PWM.
-        
         ledcAttach(PIN_BUZZER, freq, BUZZER_RES); 
-        ledcWrite(PIN_BUZZER, volume); // Low duty cycle = Quiet
+        ledcWrite(PIN_BUZZER, volume); 
         delay(duration);
         ledcWrite(PIN_BUZZER, 0);
     }
 
     void beep() {
-        // Very short, quiet blip
-        playTone(3000, 30, 5); // 3kHz, 30ms, very low volume
+        playTone(3000, 50, 127); 
     }
 
     void beepClick() {
-        // Like a button click
-        playTone(2000, 10, 5); 
+        playTone(2000, 20, 127); 
     }
     
     void beepConfirm() {
-        // Ascending
-        playTone(1500, 50, 5);
+        playTone(1500, 80, 127);
         delay(30);
-        playTone(2500, 50, 5);
+        playTone(2500, 80, 127);
+    }
+    
+    void playGyroOn() {
+        // Sci-fi "Power Up" sound
+        for (int i=1000; i<3000; i+=200) {
+            ledcAttach(PIN_BUZZER, i, BUZZER_RES);
+            ledcWrite(PIN_BUZZER, 127);
+            delay(10);
+        }
+        ledcWrite(PIN_BUZZER, 0);
+    }
+
+    void playGyroOff() {
+        // Sci-fi "Power Down" sound
+        for (int i=3000; i>1000; i-=200) {
+            ledcAttach(PIN_BUZZER, i, BUZZER_RES);
+            ledcWrite(PIN_BUZZER, 127);
+            delay(10);
+        }
+        ledcWrite(PIN_BUZZER, 0);
     }
 
     void beepStartup() {
-        playTone(1000, 100, 10);
-        delay(50);
-        playTone(2000, 100, 10);
-        delay(50);
-        playTone(3000, 200, 10);
+        // Melody: C5, E5, G5, C6
+        int melody[] = {523, 659, 784, 1047};
+        int durations[] = {100, 100, 100, 300};
+        
+        for (int i = 0; i < 4; i++) {
+             playTone(melody[i], durations[i], 127);
+             delay(30);
+        }
     }
     
     // Test sound
