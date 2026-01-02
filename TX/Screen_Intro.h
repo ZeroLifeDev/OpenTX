@@ -35,16 +35,17 @@ public:
     }
 
     void draw(DisplayManager* display) {
-        GFXcanvas16* sprite = display->getCanvas();
+        TFT_eSprite* sprite = display->getSprite();
 
         // Background is already cleared by DisplayManager
         
         // 1. Draw Logo Text (Centered)
-        sprite->setTextColor(COLOR_TEXT_MAIN);
-        display->setTextCentered("OpenTX", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20, 2);
+        sprite->setTextDatum(MC_DATUM);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
+        sprite->drawString("OpenTX", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20, FONT_HEADER);
         
-        sprite->setTextColor(COLOR_ACCENT);
-        display->setTextCentered("SYSTEMS", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 1);
+        sprite->setTextColor(COLOR_ACCENT, COLOR_BG_DARK);
+        sprite->drawString("SYSTEMS", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, FONT_BODY);
 
         // 2. Draw Loading Bar
         int barWidth = 120;
@@ -62,13 +63,14 @@ public:
         }
 
         // 3. Draw Status Text
-        sprite->setTextColor(COLOR_TEXT_SUB);
+        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_DARK);
+        sprite->setTextDatum(BC_DATUM);
         
         String status = "Ready.";
         if (progress < 40) status = "Init Hardware...";
         else if (progress < 80) status = "Loading Modules...";
         
-        display->setTextCentered(status, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 10, 1);
+        sprite->drawString(status, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 10, FONT_SMALL);
     }
 
     bool isFinished() {

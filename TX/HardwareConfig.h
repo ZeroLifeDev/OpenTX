@@ -28,7 +28,7 @@
 // Outputs
 #define PIN_BUZZER 18 
 
-// TFT Display (ST7735)
+// TFT Display (ILI9163)
 #define PIN_TFT_MOSI 13
 #define PIN_TFT_SCLK 14
 #define PIN_TFT_CS    5
@@ -45,5 +45,7 @@
 #define TEST_MODE 0       // Set to 0 to use real inputs
 #define JOY_DEADZONE 200  // Deadzone for joystick center (ADC values)
 #define JOY_CENTER 1850   // Approx center
+
+// (Configuration Removed for Adafruit ST7735 Compatibility)
 
 #endif // HARDWARE_CONFIG_H

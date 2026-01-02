@@ -23,7 +23,7 @@ public:
     }
 
     void draw(DisplayManager* display) {
-        GFXcanvas16* sprite = display->getCanvas();
+        TFT_eSprite* sprite = display->getSprite();
         
         // Header
         display->drawHeader("DEBUG / TELEMETRY");
@@ -32,40 +32,40 @@ public:
         int y = 25;
         int lh = 12; // Line Height
 
-        sprite->setTextColor(COLOR_TEXT_MAIN);
-        sprite->setTextSize(1);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
+        sprite->setTextDatum(TL_DATUM);
 
         // 1. Inputs (Raw)
-        display->setTextLeft("RAW INPUTS:", 5, y, 1); y += lh;
+        sprite->drawString("RAW INPUTS:", 5, y, FONT_SMALL); y += lh;
         
         char buf[32];
         sprintf(buf, " Steer: %d", inputManager.currentState.steering);
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
         
         sprintf(buf, " Thr: %d", inputManager.currentState.throttle);
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
         
         sprintf(buf, " Susp: %d", inputManager.currentState.potSuspension);
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
         
         sprintf(buf, " Trim: %d", inputManager.currentState.trimLevel);
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
 
         // 2. System Info
         y += 5;
-        display->setTextLeft("SYSTEM INFO:", 5, y, 1); y += lh;
+        sprite->drawString("SYSTEM INFO:", 5, y, FONT_SMALL); y += lh;
         
         float txTemp = temperatureRead(); 
         if (isnan(txTemp)) txTemp = 0.0;
         
         sprintf(buf, " TX Temp: %.1f C", txTemp);
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
         
         sprintf(buf, " RX Temp: --.-- C"); 
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
         
         sprintf(buf, " Gyro: %s", inputManager.currentState.swGyro ? "ON" : "OFF");
-        display->setTextLeft(buf, 5, y, 1); y += lh;
+        sprite->drawString(buf, 5, y, FONT_SMALL); y += lh;
 
         // 3. Mini Signal Graph at Bottom
         int graphY = SCREEN_HEIGHT - 30;
@@ -87,7 +87,7 @@ public:
             sprite->drawPixel(i, graphY + graphH - h, COLOR_ACCENT);
         }
         
-        display->setTextLeft("RX SIG", 2, graphY + 2, 1);
+        sprite->drawString("RX SIG", 2, graphY + 2, FONT_SMALL);
     }
 };
 

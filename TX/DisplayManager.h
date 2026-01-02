@@ -1,80 +1,71 @@
 #ifndef DISPLAY_MANAGER_H
 #define DISPLAY_MANAGER_H
 
-#include <SPI.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_ST7735.h>
-#include "HardwareConfig.h"
+#include "HardwareConfig.h" 
+#include <TFT_eSPI.h> // Make sure to edit User_Setup.h to select ILI9163_DRIVER
 #include "Theme.h"
 
-// Canvas size for double buffering (128x160 fits in ESP32 RAM: ~40KB)
 class DisplayManager {
 private:
-    Adafruit_ST7735 tft;
-    GFXcanvas16* canvas; // Double buffer
+    TFT_eSPI tft;
+    TFT_eSprite sprite;
 
 public:
-    // Initialize with explicit pins
-    DisplayManager() : tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_MOSI, PIN_TFT_SCLK, PIN_TFT_RST) {
-        canvas = new GFXcanvas16(SCREEN_WIDTH, SCREEN_HEIGHT);
-    }
+    DisplayManager() : tft(), sprite(&tft) {}
 
     void init() {
-        tft.initR(INITR_BLACKTAB); // Init ST7735S chip, black tab
-        tft.setRotation(0); // Portrait
-        tft.fillScreen(ST7735_BLACK);
+        tft.init();
+        tft.setRotation(0); 
+        tft.fillScreen(COLOR_BG_DARK);
         
-        // Clear canvas
-        canvas->fillScreen(COLOR_BG_DARK);
+        // ILI9163 usually matches ST7735 BGR/RGB needs
+        tft.setSwapBytes(true); 
+
+        sprite.setColorDepth(16);
+        sprite.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
+        sprite.setSwapBytes(true);
     }
 
-    GFXcanvas16* getCanvas() {
-        return canvas;
+    TFT_eSprite* getSprite() {
+        return &sprite;
     }
 
     void beginFrame() {
-        canvas->fillScreen(COLOR_BG_DARK);
+        sprite.fillSprite(COLOR_BG_DARK);
     }
 
     void endFrame() {
-        // Push canvas to display
-        // Optimized drawing not possible with standard GFX drawRGBBitmap to ST7735 without modification
-        // but drawRGBBitmap is available.
-        tft.drawRGBBitmap(0, 0, canvas->getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
+        sprite.pushSprite(0, 0);
     }
     
-    // Legacy helper compatibility
+    // Draw Header Helper
     void drawHeader(const char* title) {
-        canvas->fillRect(0, 0, SCREEN_WIDTH, 20, COLOR_BG_PANEL);
-        canvas->drawFastHLine(0, 20, SCREEN_WIDTH, COLOR_ACCENT);
-        
-        canvas->setTextColor(COLOR_TEXT_MAIN);
-        setTextCentered(title, SCREEN_WIDTH / 2, 6, 1);
+        sprite.fillRect(0, 0, SCREEN_WIDTH, 20, COLOR_BG_PANEL);
+        sprite.drawFastHLine(0, 20, SCREEN_WIDTH, COLOR_ACCENT);
+        sprite.setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
+        sprite.setTextDatum(MC_DATUM);
+        sprite.drawString(title, SCREEN_WIDTH / 2, 11, FONT_SMALL);
     }
-
-    // Helper to simulate text datum (centering)
+    
+    // Legacy Helpers not needed as we updated screens to use Sprite directly,
+    // but in case any GFX calls remain:
     void setTextCentered(String text, int x, int y, int size) {
-        int w = text.length() * 6 * size; // Approx width (default font 6x8)
-        int h = 8 * size;
-        canvas->setCursor(x - w/2, y);
-        canvas->setTextSize(size);
-        canvas->print(text);
+        sprite.setTextDatum(MC_DATUM);
+        sprite.drawString(text, x, y, size);
     }
     
     void setTextLeft(String text, int x, int y, int size) {
-        canvas->setCursor(x, y);
-        canvas->setTextSize(size);
-        canvas->print(text);
+        sprite.setTextDatum(TL_DATUM);
+        sprite.drawString(text, x, y, size);
     }
     
-    // GFX doesn't have drawSmoothArc, draw helper
     void drawArcSegment(int x, int y, int r, int startAngle, int endAngle, uint16_t color) {
-        // Very basic approximations
-        for (int i=startAngle; i<=endAngle; i+=5) {
+         // rough implementation for sprite
+         for (int i=startAngle; i<=endAngle; i+=5) {
              float rad = i * DEG_TO_RAD;
              int px = x + cos(rad) * r;
              int py = y + sin(rad) * r;
-             canvas->drawPixel(px, py, color);
+             sprite.drawPixel(px, py, color);
         }
     }
 };
