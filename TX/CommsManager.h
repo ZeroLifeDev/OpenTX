@@ -15,37 +15,48 @@ typedef struct {
     uint32_t timestamp;
 } ControlPacket;
 
+// MUST MATCH RX EXACTLY
+typedef struct {
+    float rxVoltage; // Example telemetry
+    bool active;
+} TelemetryPacket;
+
 class CommsManager {
 private:
     ControlPacket packet;
+    TelemetryPacket rxData;
+    
     esp_now_peer_info_t peerInfo;
     uint8_t broadcastAddress[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    
+    // Connection Logic
+    bool connected = false;
+    unsigned long lastHeartbeat = 0;
     
     // blinking logic
     unsigned long lastBlink = 0;
     bool ledState = false;
-
+    
+    // callback needs access to instance or valid static
 public:
+    static void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, int len);
+
     void init() {
         // Init WiFi Mode
         WiFi.mode(WIFI_STA);
         
         // Init ESP-NOW
-        if (esp_now_init() != ESP_OK) {
-            Serial.println("Error initializing ESP-NOW");
-            return;
-        }
+        if (esp_now_init() != ESP_OK) return;
 
         // Register Peer (Broadcast)
         memset(&peerInfo, 0, sizeof(peerInfo));
         memcpy(peerInfo.peer_addr, broadcastAddress, 6);
         peerInfo.channel = 0;  
         peerInfo.encrypt = false;
-        
-        if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-            Serial.println("Failed to add peer");
-            return;
-        }
+        if (esp_now_add_peer(&peerInfo) != ESP_OK) return;
+
+        // Register Callback for Telemetry
+        esp_now_register_recv_cb(CommsManager::OnDataRecv);
 
         // Init LED
         pinMode(PIN_LED_BUILTIN, OUTPUT);
@@ -59,26 +70,49 @@ public:
         packet.gyroEnabled = gyro;
         packet.timestamp = millis();
 
-        esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &packet, sizeof(packet));
-        
-        if (result == ESP_OK) {
-            // Success
-        } else {
-            // Error
-        }
+        esp_now_send(broadcastAddress, (uint8_t *) &packet, sizeof(packet));
     }
 
     void update() {
-        // Blink LED to indicate transmission active
-        if (millis() - lastBlink > 200) { // Fast blink for TX
-            lastBlink = millis();
-            ledState = !ledState;
-            digitalWrite(PIN_LED_BUILTIN, ledState);
+        // Check Timeout (1 second)
+        if (millis() - lastHeartbeat > 1000) {
+            connected = false;
         }
+
+        // LED Logic
+        if (connected) {
+            digitalWrite(PIN_LED_BUILTIN, LOW); // OFF when connected (active low or high? usually HIGH is on) assuming HIGH ON.
+        } else {
+            // Blink when searching
+            if (millis() - lastBlink > 200) { 
+                lastBlink = millis();
+                ledState = !ledState;
+                digitalWrite(PIN_LED_BUILTIN, ledState);
+            }
+        }
+    }
+    
+    bool isConnected() { return connected; }
+    
+    // Internal use for static callback
+    void markHeartbeat() {
+        if (!connected) {
+            // New Connection Event? Could trigger sound here if we had ref to soundManager
+            // For now just flag it
+        }
+        connected = true;
+        lastHeartbeat = millis();
     }
 };
 
 // Global Instance
 CommsManager commsManager;
+
+// Static Callback Implementation
+void CommsManager::OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, int len) {
+    if (len == sizeof(TelemetryPacket)) {
+        commsManager.markHeartbeat();
+    }
+}
 
 #endif // COMMS_MANAGER_H

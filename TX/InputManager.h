@@ -45,19 +45,17 @@ public:
         pinMode(PIN_SW_GYRO, INPUT_PULLUP);
     }
 
+    // Helper function for mapping joystick values
+    // Assumes 0-4095 range for raw input
+    int mapJoystick(int rawValue) {
+        // Map from 0-4095 to -100-100
+        return map(rawValue, 0, 4095, -100, 100);
+    }
+
     void update() {
         // Save last state
         lastState = currentState;
 
-        // Read Analog
-        int rawSteering = analogRead(PIN_STEERING);
-        int rawThrottle = analogRead(PIN_THROTTLE);
-        
-        // Apply Deadzone
-        if (abs(rawSteering - JOY_CENTER) < JOY_DEADZONE) rawSteering = JOY_CENTER;
-        if (abs(rawThrottle - JOY_CENTER) < JOY_DEADZONE) rawThrottle = JOY_CENTER;
-        
-        currentState.steering = rawSteering;
         currentState.throttle = rawThrottle;
 
         #if TEST_MODE

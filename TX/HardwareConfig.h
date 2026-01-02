@@ -43,8 +43,12 @@
 
 // --- Configuration ---
 #define TEST_MODE 0       // Set to 0 to use real inputs
-#define JOY_DEADZONE 200  // Deadzone for joystick center (ADC values)
+#define JOY_DEADZONE 250  // Increased Deadzone
 #define JOY_CENTER 1850   // Approx center
+
+// Hardware Calibration (User reported -10 offset)
+#define STEER_CENTER_FIX 10  // Add to correct the -10 reading
+#define THROT_CENTER_FIX 10  // Add to correct the -10 reading
 
 // (Configuration Removed for Adafruit ST7735 Compatibility)
 
