@@ -7,108 +7,108 @@
 #include "Screen_Dashboard.h"
 #include "Screen_Debug.h"
 #include "Screen_Popup.h"
-#include "SoundManager.h"
+#include "Screen_Notification.h"
+#include "Screen_Menu.h"
 
 // Enum for Screen States
 enum ScreenState {
     SCREEN_INTRO,
-    SCREEN_MAIN,
+    SCREEN_DASHBOARD,
+    SCREEN_MENU,
     SCREEN_DEBUG
 };
 
 class UIManager {
 private:
-    ScreenState currentScreen;
+    ScreenState currentState = SCREEN_INTRO;
+    ScreenIntro screenIntro;
+    ScreenDashboard screenDashboard;
+    ScreenDebug screenDebug;
+    ScreenPopup screenPopup;
+    ScreenMenu screenMenu;
+    ScreenNotification screenNotification; // The Among Us Notifier
     
+    // Previous button states for edge detection in UI
+    bool lastBtnMenu = false;
+    bool lastBtnSet = false;
+    bool lastTrimPlus = false;
+    bool lastTrimMinus = false;
+
 public:
     void init() {
-        currentScreen = SCREEN_INTRO;
         screenIntro.init();
         screenDebug.init();
-    }
-
-// Update Trim Sound Logic needs to be in loop or linked to state change
-// Since InputManager handles state, we can detect edge there or check here if we had access to "changed" flags.
-// InputManager stores lastState. We can check here or in InputManager.
-// Better to check here in UIManager update or just let InputManager handle sound?
-// UIManager is better for UI feedback.
-
+        screenMenu.init(); 
+        screenNotification.init();
+    } 
+    
     void update() {
-        // Priority: Popup Update
+        // Overlay Management (Priority)
+        // Check Notification first (Highest Priority - Emergency)
+        screenNotification.update();
+        if (screenNotification.isActive()) return; // Block input
+
         if (screenPopup.isVisible()) {
-        // Handle Popup Animations
-        if (screenPopup.isActive) {
-            if (screenPopup.isFinished()) {
-                 screenPopup.hide();
-            }
-            return; // Block input while popup active
+            if (screenPopup.isFinished()) screenPopup.hide();
+            return; 
         }
 
         bool btnMenu = digitalRead(PIN_BTN_MENU) == LOW;
         bool btnSet  = digitalRead(PIN_BTN_SET) == LOW;
         bool trimP   = digitalRead(PIN_BTN_TRIM_PLUS) == LOW;
         bool trimM   = digitalRead(PIN_BTN_TRIM_MINUS) == LOW;
+        
+        // Edge Detect
+        bool pMenu = btnMenu && !lastBtnMenu;
+        bool pSet = btnSet && !lastBtnSet;
+        bool pPlus = trimP && !lastTrimPlus;
+        bool pMinus = trimM && !lastTrimMinus;
 
         // Intro Logic
         if (currentState == SCREEN_INTRO) {
             screenIntro.update();
             if (screenIntro.isFinished()) {
                 currentState = SCREEN_DASHBOARD;
-                displayManager.beginFrame(); // Clear
-                displayManager.endFrame();
+                soundManager.beepStartup(); 
             }
             return;
         }
 
-        // Global: Menu Button Logic
-        if (btnMenu && !lastBtnMenu) {
-            // Toggle Main -> Menu -> Debug -> Main
-            soundManager.playClick();
-            if (currentState == SCREEN_DASHBOARD) currentState = SCREEN_MENU;
-            else if (currentState == SCREEN_MENU) currentState = SCREEN_DEBUG;
-            else currentState = SCREEN_DASHBOARD;
+        // Global Menu Toggle
+        if (pMenu) {
+            soundManager.playBack();
+            if (currentState == SCREEN_MENU) currentState = SCREEN_DASHBOARD;
+            else currentState = SCREEN_MENU;
         }
 
-        // Screen Specific Logic
-        if (currentState == SCREEN_DASHBOARD) {
-            // Set Button -> Reset Trim
-            if (btnSet && !lastBtnSet) {
-                 inputManager.resetTrim();
-                 showPopup("TRIM RESET", "CENTERED", COLOR_ACCENT);
-                 soundManager.playConfirm();
-            }
-            // Gyro Switch is handled in InputManager but we can show popup
-            static bool lastGyro = false;
-            if (inputManager.currentState.swGyro != lastGyro) {
-                lastGyro = inputManager.currentState.swGyro;
-                if (lastGyro) {
-                     showPopup("GYRO SYSTEM", "ENABLED", COLOR_ACCENT);
-                     soundManager.playGyroOn();
-                } else {
-                     showPopup("GYRO SYSTEM", "DISABLED", COLOR_ACCENT_ALT);
-                     soundManager.playGyroOff();
+        // State Machine
+        switch (currentState) {
+            case SCREEN_DASHBOARD:
+                // Normal Driving
+                if (pSet) {
+                    inputManager.resetTrim();
+                    showPopup("TRIM RESET", "OK", COLOR_ACCENT);
+                    soundManager.playConfirm();
                 }
-            }
-        }
-        else if (currentState == SCREEN_MENU) {
-            // Use Trim Buttons to Navigate
-            if (trimP && !lastTrimPlus) {
-                screenMenu.next();
-                soundManager.playClick();
-            }
-            if (trimM && !lastTrimMinus) {
-                screenMenu.prev();
-                soundManager.playClick();
-            }
-            if (btnSet && !lastBtnSet) {
-                // Select Action
-                soundManager.playConfirm();
-                // For now, simplify: just go back to dash or debug based on selection?
-                // Or just placeholder
-            }
-        }
-        else if (currentState == SCREEN_DEBUG) {
-            screenDebug.update();
+                break;
+                
+            case SCREEN_MENU:
+                // Menu Navigation
+                if (pPlus) { screenMenu.next(); soundManager.playClick(); }
+                if (pMinus) { screenMenu.prev(); soundManager.playClick(); }
+                if (pSet) {
+                     soundManager.playConfirm();
+                     int sel = screenMenu.getSelection();
+                     if (sel == 0) currentState = SCREEN_DASHBOARD;
+                     else if (sel == 1) currentState = SCREEN_DEBUG;
+                     else if (sel == 2) showPopup("TRIM SETTINGS", "USE BUTTONS", COLOR_HIGHLIGHT); 
+                     else if (sel == 3) showPopup("OpenTX v2.0", "PROFESSIONAL", COLOR_TEXT_MAIN);
+                }
+                break;
+                
+            case SCREEN_DEBUG:
+                screenDebug.update();
+                break;
         }
         
         lastBtnMenu = btnMenu;
@@ -127,14 +127,22 @@ public:
             case SCREEN_DEBUG: screenDebug.draw(&displayManager); break;
         }
         
-        // Draw Popup Overlay on top
+        // Draw Popup Overlay 
         screenPopup.draw(&displayManager);
+        
+        // Draw Critical Notifications (Top)
+        screenNotification.draw(&displayManager);
 
         displayManager.endFrame();
     }
     
     void showPopup(const char* msg, const char* sub, uint16_t color) {
         screenPopup.show(msg, sub, color);
+    }
+    
+    // Call this from CommsManager or when needed
+    void showNotification(String msg, String sub, uint16_t color) {
+        screenNotification.show(msg, sub, color);
     }
 };
 

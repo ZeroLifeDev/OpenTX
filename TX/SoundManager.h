@@ -8,84 +8,89 @@
 #define BUZZER_CHANNEL 0
 #define BUZZER_RES 8
 
+
+// Note Frequencies
+#define NOTE_C5 523
+#define NOTE_D5 587
+#define NOTE_E5 659
+#define NOTE_F5 698
+#define NOTE_G5 784
+#define NOTE_A5 880
+#define NOTE_B5 988
+#define NOTE_C6 1047
+#define NOTE_E6 1319
+#define NOTE_G6 1568
+#define NOTE_C7 2093
+
 class SoundManager {
 private:
     bool enabled;
 
 public:
     void init() {
-        // ESP32 3.0+ API
-        // ledcAttach(pin, freq, resolution)
-        // Returns true on success
         if (ledcAttach(PIN_BUZZER, 2000, BUZZER_RES)) {
-            ledcWrite(PIN_BUZZER, 0); // Off
+            ledcWrite(PIN_BUZZER, 0); 
             enabled = true;
         } else {
             enabled = false;
         }
     }
 
-    // Play a gentle tone
-    // Freq: Hz
-    // Duration: ms
-    // Volume: 0-255 (Duty Cycle). For max loudness on passive buzzer, use 127 (50%).
     void playTone(int freq, int duration, int volume = 127) {
         if (!enabled) return;
-        
         ledcAttach(PIN_BUZZER, freq, BUZZER_RES); 
         ledcWrite(PIN_BUZZER, volume); 
         delay(duration);
         ledcWrite(PIN_BUZZER, 0);
     }
 
-    void beep() {
-        playTone(3000, 50, 127); 
-    }
-
-    void beepClick() {
-        playTone(2000, 20, 127); 
-    }
-    
-    void beepConfirm() {
-        playTone(1500, 80, 127);
-        delay(30);
-        playTone(2500, 80, 127);
-    }
-    
-    void playGyroOn() {
-        // Sci-fi "Power Up" sound
-        for (int i=1000; i<3000; i+=200) {
-            ledcAttach(PIN_BUZZER, i, BUZZER_RES);
-            ledcWrite(PIN_BUZZER, 127);
+    // Play a gentle rising arpeggio (Connected)
+    void playConnected() {
+        if (!enabled) return;
+        int notes[] = {NOTE_C5, NOTE_E5, NOTE_G5, NOTE_C6, NOTE_E6};
+        for (int i=0; i<5; i++) {
+            playTone(notes[i], 80, 100);
             delay(10);
         }
-        ledcWrite(PIN_BUZZER, 0);
     }
 
-    void playGyroOff() {
-        // Sci-fi "Power Down" sound
-        for (int i=3000; i>1000; i-=200) {
-            ledcAttach(PIN_BUZZER, i, BUZZER_RES);
-            ledcWrite(PIN_BUZZER, 127);
-            delay(10);
+    // Critical Alarm / Disconnect sound
+    // Sharp, alarming siren pattern
+    void playDisconnected() {
+        if (!enabled) return;
+        // Siren: High Low High Low
+        for(int k=0; k<3; k++) {
+            playTone(1500, 150, 200);
+            playTone(1000, 150, 200);
         }
-        ledcWrite(PIN_BUZZER, 0);
     }
 
+    // System Boot Sweep
     void beepStartup() {
-        // Melody: C5, E5, G5, C6
-        int melody[] = {523, 659, 784, 1047};
-        int durations[] = {100, 100, 100, 300};
-        
-        for (int i = 0; i < 4; i++) {
-             playTone(melody[i], durations[i], 127);
-             delay(30);
+        if (!enabled) return;
+        // rapid rise
+        for (int i=500; i<2500; i+=100) {
+            ledcAttach(PIN_BUZZER, i, BUZZER_RES);
+            ledcWrite(PIN_BUZZER, 100);
+            delay(5);
         }
+        ledcWrite(PIN_BUZZER, 0);
+        delay(100);
+        // Final "Ping"
+        playTone(NOTE_C7, 300, 150);
     }
     
-    // Test sound
-    void test() {
-        beepStartup();
+    // UI Sounds
+    void playClick() { playTone(2000, 15, 80); } // Short, crisp
+    void playConfirm() { playTone(1200, 50, 100); delay(50); playTone(1800, 80, 100); }
+    void playBack() { playTone(1800, 50, 100); delay(50); playTone(1200, 80, 100); }
+    
+    // Gyro
+    void playGyroOn() {
+        playTone(NOTE_C5, 50); playTone(NOTE_E5, 50); playTone(NOTE_G5, 100);
+    }
+    void playGyroOff() {
+        playTone(NOTE_G5, 50); playTone(NOTE_E5, 50); playTone(NOTE_C5, 100);
     }
 };
 
@@ -93,3 +98,4 @@ public:
 SoundManager soundManager;
 
 #endif // SOUND_MANAGER_H
+

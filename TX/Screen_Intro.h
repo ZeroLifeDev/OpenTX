@@ -3,74 +3,69 @@
 
 #include "DisplayManager.h"
 #include "Theme.h"
+#include "AnimationUtils.h"
 
 class ScreenIntro {
 private:
     unsigned long startTime;
     bool isComplete;
-    int progress;
-
+    
+    // Animations
+    AnimFloat logoY;
+    AnimFloat lineW;
+    
 public:
+    ScreenIntro() : logoY(SCREEN_HEIGHT, 0.1f, 0.7f), lineW(0, 0.2f, 0.9f) {}
+
     void init() {
         startTime = millis();
         isComplete = false;
-        progress = 0;
+        logoY.snap(SCREEN_HEIGHT + 20); // Start below
+        logoY.target = SCREEN_HEIGHT/2 - 10; // Move to center
+        
+        lineW.snap(0);
+        lineW.target = SCREEN_WIDTH - 60;
     }
 
     void update() {
         if (isComplete) return;
-
         unsigned long elapsed = millis() - startTime;
-
-        // Simulate system check progress
-        if (elapsed < 1000) {
-            progress = map(elapsed, 0, 1000, 0, 40);
-        } else if (elapsed < 2000) {
-            progress = map(elapsed, 1000, 2000, 40, 80);
-        } else if (elapsed < 2500) {
-            progress = map(elapsed, 2000, 2500, 80, 100);
-        } else {
+        
+        logoY.update();
+        lineW.update();
+        
+        if (elapsed > 3000) {
             isComplete = true;
         }
     }
 
     void draw(DisplayManager* display) {
         TFT_eSprite* sprite = display->getSprite();
-
-        // Background is already cleared by DisplayManager
         
-        // 1. Draw Logo Text (Centered)
-        sprite->setTextDatum(MC_DATUM);
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
-        sprite->drawString("OpenTX", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20, FONT_HEADER);
+        sprite->fillSprite(COLOR_BG_MAIN); // Light Theme
         
-        sprite->setTextColor(COLOR_ACCENT, COLOR_BG_DARK);
-        sprite->drawString("SYSTEMS", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, FONT_BODY);
-
-        // 2. Draw Loading Bar
-        int barWidth = 120;
-        int barHeight = 6;
-        int barX = (SCREEN_WIDTH - barWidth) / 2;
-        int barY = SCREEN_HEIGHT - 30;
-
-        // Bar Container
-        sprite->drawRect(barX, barY, barWidth, barHeight, COLOR_BG_PANEL);
-        
-        // Bar Fill
-        int fillWidth = map(progress, 0, 100, 0, barWidth - 2);
-        if (fillWidth > 0) {
-            sprite->fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, COLOR_ACCENT);
+        // Grid Background (Subtle)
+        for (int i=0; i<SCREEN_HEIGHT; i+=10) {
+             if (i % 20 == 0) sprite->drawFastHLine(0, i, SCREEN_WIDTH, COLOR_BG_SHADOW);
         }
 
-        // 3. Draw Status Text
-        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_DARK);
-        sprite->setTextDatum(BC_DATUM);
+        int cy = (int)logoY.val();
+        int cx = SCREEN_WIDTH/2;
         
-        String status = "Ready.";
-        if (progress < 40) status = "Init Hardware...";
-        else if (progress < 80) status = "Loading Modules...";
+        // Main Logo
+        sprite->setTextDatum(MC_DATUM);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
+        sprite->drawString("OpenTX", cx, cy, FONT_HEADER);
         
-        sprite->drawString(status, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 10, FONT_SMALL);
+        // Tagline (Flashing)
+        if (millis() % 400 < 200) {
+            sprite->setTextColor(COLOR_ACCENT_3, COLOR_BG_MAIN);
+            sprite->drawString("SYSTEM READY", cx, cy + 25, FONT_MICRO);
+        }
+        
+        // Loading Bars (Expanding)
+        int w = (int)lineW.val();
+        sprite->fillRect(cx - w/2, cy + 40, w, 4, COLOR_ACCENT_2);
     }
 
     bool isFinished() {
@@ -78,7 +73,6 @@ public:
     }
 };
 
-// Global Instance
-ScreenIntro screenIntro;
+extern ScreenIntro screenIntro;
 
 #endif // SCREEN_INTRO_H

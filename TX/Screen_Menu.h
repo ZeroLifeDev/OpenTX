@@ -4,81 +4,85 @@
 #include "DisplayManager.h"
 #include "InputManager.h"
 #include "HardwareConfig.h"
+#include "Theme.h"
 
-// Simple List Menu
+// Glass Menu System
+#define MENU_ITEMS 4
+
 class ScreenMenu {
 private:
-    const char* items[4] = { "DASHBOARD", "TELEMETRY", "SETTINGS", "ABOUT" };
-    int itemCount = 4;
+    const char* items[MENU_ITEMS] = { "DASHBOARD", "TELEMETRY", "SETTINGS", "ABOUT" };
+    int itemCount = MENU_ITEMS;
     int selected = 0;
     
     // Animation
-    int animY = 0; 
-    int targetedY = 0;
-
+    int curY = 0;
+    
 public:
+    void init() {
+         selected = 0;
+    }
+
     void update() {
-        // Navigation logic handled by UIManager usually, but we can visualize selection here
-        // If we had up/down buttons, we would change 'selected'
-        // For now, since we only have "Menu" button which cycles screens, this might just be a static list
-        // BUT user asked for "Toggle through stuff to get in". 
-        // We need 'Up', 'Down', 'Select'.
-        // We only have: Menu (Cycle), Set (Action), Trim+, Trim-
-        
-        // Let's use Trim buttons for Menu Up/Down when in Menu Screen?
-        // That requires InputManager to know context. 
-        // For now, let's just make it look cool.
+        // Controlled by UIManager
     }
     
-    // Method to change selection
     void next() {
         selected++;
-        if (selected >= itemCount) selected = 0;
+        if (selected >= MENU_ITEMS) selected = 0;
     }
     
     void prev() {
         selected--;
-        if (selected < 0) selected = itemCount - 1;
+        if (selected < 0) selected = MENU_ITEMS - 1;
     }
+    
+    int getSelection() { return selected; }
 
     void draw(DisplayManager* display) {
         TFT_eSprite* sprite = display->getSprite();
         
-        // Dark Background with Grid
-        sprite->fillSprite(COLOR_BG_DARK);
-        for(int i=0; i<SCREEN_HEIGHT; i+=20) sprite->drawFastHLine(0, i, SCREEN_WIDTH, 0x18E3); // Faint line
+        sprite->fillSprite(COLOR_BG_MAIN);
         
-        // Header
-        display->drawHeader("SYSTEM MENU");
+        // Glass Header
+        sprite->fillRect(0, 0, SCREEN_WIDTH, 30, COLOR_BG_PANEL);
+        sprite->drawFastHLine(0, 30, SCREEN_WIDTH, COLOR_BG_SHADOW);
         
-        int startY = 35;
-        int h = 25;
-        
-        // Draw Items
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
+        sprite->setTextDatum(MC_DATUM);
+        sprite->drawString("MAIN MENU", SCREEN_WIDTH/2, 15, FONT_HEADER);
+
+        // List
+        int startY = 40;
+        int h = 28;
+
         for(int i=0; i<itemCount; i++) {
             int y = startY + (i * h);
             
             if (i == selected) {
-                // Selected Item - "Expensive" Glow
-                // Gradient bar
-                sprite->fillRect(10, y, SCREEN_WIDTH-20, h-4, COLOR_ACCENT);
-                sprite->drawRect(10, y, SCREEN_WIDTH-20, h-4, COLOR_TEXT_MAIN);
+                // Active Item: Floating Card
+                sprite->fillRoundRect(10, y, SCREEN_WIDTH-20, h-4, 4, COLOR_BG_PANEL);
+                sprite->drawRoundRect(10, y, SCREEN_WIDTH-20, h-4, 4, COLOR_ACCENT_2);
                 
-                sprite->setTextColor(COLOR_BG_DARK, COLOR_ACCENT);
+                // Glow text
+                sprite->setTextColor(COLOR_ACCENT_2, COLOR_BG_PANEL);
                 sprite->setTextDatum(MC_DATUM);
-                sprite->drawString(items[i], SCREEN_WIDTH/2, y + (h/2) - 2, FONT_BODY);
-                
-                // Icon/Arrow
-                sprite->fillTriangle(SCREEN_WIDTH-25, y+5, SCREEN_WIDTH-25, y+15, SCREEN_WIDTH-18, y+10, COLOR_BG_DARK);
+                sprite->drawString(items[i], SCREEN_WIDTH/2, y + (h/2) - 2, FONT_LABEL); // Bold
             } else {
-                // Normal Item
-                sprite->drawRect(10, y, SCREEN_WIDTH-20, h-4, COLOR_BG_PANEL);
-                
-                sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
+                // Inactive
+                sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_MAIN);
                 sprite->setTextDatum(MC_DATUM);
                 sprite->drawString(items[i], SCREEN_WIDTH/2, y + (h/2) - 2, FONT_BODY);
             }
         }
+        
+        // Footer (Keys)
+        sprite->fillRect(0, SCREEN_HEIGHT-20, SCREEN_WIDTH, 20, COLOR_BG_PANEL);
+        sprite->drawFastHLine(0, SCREEN_HEIGHT-20, SCREEN_WIDTH, COLOR_BG_SHADOW);
+        
+        sprite->setTextColor(COLOR_TEXT_MUTED, COLOR_BG_PANEL);
+        sprite->setTextDatum(MC_DATUM);
+        sprite->drawString("[SET] OK   [MENU] BACK", SCREEN_WIDTH/2, SCREEN_HEIGHT-10, FONT_MICRO);
     }
 };
 

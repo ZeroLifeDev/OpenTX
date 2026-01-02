@@ -4,13 +4,12 @@
 #include "DisplayManager.h"
 #include "Theme.h"
 
-// Generic Pop-up Screen for notifications / cutscenes
+// Generic Pop-up Screen
 class ScreenPopup {
 private:
     unsigned long startTime;
     String message;
     String subMessage;
-    int duration;
     bool isActive;
     uint16_t color;
 
@@ -25,55 +24,43 @@ public:
     
     void hide() { isActive = false; }
     
-    bool isFinished() {
-        return (millis() - startTime > duration);
-    }
+    bool isFinished() { return (millis() - startTime > 1500); }
     
     void draw(DisplayManager* display) {
         if (!isActive) return;
         
         TFT_eSprite* sprite = display->getSprite();
         
-        long elapsed = millis() - startTime;
-        
-        // "Among Us" Style:
-        // 1. Full Screen Tint/Overlay? No, just heavy bars.
-        // 2. Animate Bars entering from sides? 
-        // Let's do a simple expanding center bar.
-        
-        int h = 50;
+        // Glass Overlay Panel
+        int w = SCREEN_WIDTH - 20;
+        int h = 60;
+        int x = 10;
         int y = (SCREEN_HEIGHT - h) / 2;
         
-         // Animation: Expand Height
-        if (elapsed < 100) h = map(elapsed, 0, 100, 0, 50);
+        // Drop Shadow
+        sprite->fillRect(x+2, y+2, w, h, COLOR_TEXT_SUB);
+        // Main Panel
+        sprite->fillRect(x, y, w, h, COLOR_BG_PANEL);
+        sprite->drawRect(x, y, w, h, color); // Color Border
         
-        // Black Bar Background
-        sprite->fillRect(0, y, SCREEN_WIDTH, h, COLOR_BG_DARK);
+        // Header Strip
+        sprite->fillRect(x, y, w, 15, color);
         
-        // Borders (Top/Bottom)
-        sprite->drawFastHLine(0, y, SCREEN_WIDTH, color);
-        sprite->drawFastHLine(0, y+h-1, SCREEN_WIDTH, color);
+        // Text
+        sprite->setTextColor(COLOR_BG_PANEL, color);
+        sprite->setTextDatum(MC_DATUM);
+        sprite->drawString("ALERT", SCREEN_WIDTH/2, y + 8, FONT_MICRO);
         
-        // Strobe Effect for Text
-        bool showText = true;
-        if (elapsed < 300 && (elapsed / 50) % 2 == 0) showText = false;
+        sprite->setTextColor(color, COLOR_BG_PANEL);
+        sprite->drawString(message, SCREEN_WIDTH/2, y + 28, FONT_LABEL);
         
-        if (showText) {
-            sprite->setTextColor(color, COLOR_BG_DARK);
-            sprite->setTextDatum(MC_DATUM);
-            sprite->drawString(message, SCREEN_WIDTH/2, y + 15, FONT_BODY);
-            
-            sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
-            sprite->drawString(subMessage, SCREEN_WIDTH/2, y + 35, FONT_SMALL);
-        }
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
+        sprite->drawString(subMessage, SCREEN_WIDTH/2, y + 48, FONT_SMALL);
     }
     
-    bool isVisible() {
-        return isActive;
-    }
+    bool isVisible() { return isActive; }
 };
 
-// Global Instance
-ScreenPopup screenPopup;
+extern ScreenPopup screenPopup;
 
 #endif // SCREEN_POPUP_H

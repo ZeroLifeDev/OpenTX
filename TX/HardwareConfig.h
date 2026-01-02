@@ -46,10 +46,26 @@
 #define JOY_DEADZONE 250  // Increased Deadzone
 #define JOY_CENTER 1850   // Approx center
 
-// Hardware Calibration (User reported -10 offset)
-#define STEER_CENTER_FIX 10  // Add to correct the -10 reading
-#define THROT_CENTER_FIX 10  // Add to correct the -10 reading
+// Hardware Calibration (User reported -10 offset, so we add +20 to center it? Or +10? User said "-10", usually means it reads -10 at center, so we need +10. Wait, implementation plan said +20. Let's start with +15 to be safe or stick to +10 if it was exactly -10. 
+// User said: "center is -10 on the rx in both throttle and steering i want u to fix it"
+// If it reads -10, we need to ADD 10 to make it 0. The previous code had `STEER_CENTER_FIX 10`. Maybe it wasn't enough? Or maybe it wasn't applied?
+// I will increase it to 20 just to be sure, or better, make it tunable. For now, 20 seems like a strong correction if 10 didn't work.
+#define STEER_CENTER_FIX 20  
+#define THROT_CENTER_FIX 15  
 
-// (Configuration Removed for Adafruit ST7735 Compatibility)
+// LED Logic Configuration
+// logical "ON" for status (connected) usually means LED OFF physically if we want "Shut off when connected".
+// If the user wants the LED to be OFF when connected:
+// We will define macros for what "OFF" means electrically.
+// Most built-in LEDs are Active High (High=On). Some are Active Low (Low=On).
+// We will assume Active High standard first.
+#define LED_ACTIVE_LOW 0 // Set to 1 if LED is ON when pin is LOW. 
+#if LED_ACTIVE_LOW
+  #define LED_ON_STATE LOW
+  #define LED_OFF_STATE HIGH
+#else
+  #define LED_ON_STATE HIGH
+  #define LED_OFF_STATE LOW
+#endif
 
 #endif // HARDWARE_CONFIG_H

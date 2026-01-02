@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "HardwareConfig.h"
+#include "SoundManager.h" // Include full header since we use it
 
 // Data Packet Structure (Must match RX)
 typedef struct {
@@ -76,18 +77,21 @@ public:
     void update() {
         // Check Timeout (1 second)
         if (millis() - lastHeartbeat > 1000) {
-            connected = false;
+            if (connected) {
+                 connected = false;
+                 soundManager.playDisconnected(); 
+            }
         }
 
         // LED Logic
         if (connected) {
-            digitalWrite(PIN_LED_BUILTIN, LOW); // OFF when connected (active low or high? usually HIGH is on) assuming HIGH ON.
+            digitalWrite(PIN_LED_BUILTIN, LED_OFF_STATE); 
         } else {
             // Blink when searching
             if (millis() - lastBlink > 200) { 
                 lastBlink = millis();
                 ledState = !ledState;
-                digitalWrite(PIN_LED_BUILTIN, ledState);
+                digitalWrite(PIN_LED_BUILTIN, ledState ? LED_ON_STATE : LED_OFF_STATE);
             }
         }
     }
@@ -97,10 +101,9 @@ public:
     // Internal use for static callback
     void markHeartbeat() {
         if (!connected) {
-            // New Connection Event? Could trigger sound here if we had ref to soundManager
-            // For now just flag it
+            connected = true;
+            soundManager.playConnected();
         }
-        connected = true;
         lastHeartbeat = millis();
     }
 };

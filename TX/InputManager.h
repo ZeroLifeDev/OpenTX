@@ -56,16 +56,27 @@ public:
         // Save last state
         lastState = currentState;
 
-        currentState.throttle = rawThrottle;
-
         #if TEST_MODE
             // Force missing inputs to "Safe" values (Center/Zero)
-            // currentState.steering = JOY_CENTER; 
-            // currentState.throttle = JOY_CENTER; 
+            currentState.steering = 0; // Center
+            currentState.throttle = 0; // Center
             currentState.potSuspension = 2048; // Middle
             currentState.swGyro = false;
             // Trim controlled by buttons below even in test mode if buttons mapped or simulated
         #else
+            // Read Joysticks (ADC)
+            // Adjust for hardware center offset
+            int rawSteer = analogRead(PIN_STEERING);
+            int rawThrot = analogRead(PIN_THROTTLE);
+            
+            // Map to -100 to 100
+            // We use a safe mapping that ignores the deadzone in the middle
+            int mapSteer = mapJoystick(rawSteer) + STEER_CENTER_FIX;
+            int mapThrot = mapJoystick(rawThrot) + THROT_CENTER_FIX;
+            
+            // Constrain
+            currentState.steering = constrain(mapSteer, -100, 100);
+            currentState.throttle = constrain(mapThrot, -100, 100);
             currentState.potSuspension = analogRead(PIN_POT_SUSPENSION);
             currentState.swGyro = !digitalRead(PIN_SW_GYRO);
         #endif
@@ -103,15 +114,17 @@ public:
     bool isMenuPressed() { return currentState.btnMenu && !lastState.btnMenu; }
     bool isSetPressed() { return currentState.btnSet && !lastState.btnSet; }
     
+    void resetTrim() {
+        internalTrim = 0;
+    }
+    
     // Helper to get normalized values (-100 to 100)
     int getSteeringNormalized() {
-        int val = map(currentState.steering, 0, 4095, -100, 100);
-        return constrain(val, -100, 100);
+        return currentState.steering; // Already mapped in update()
     }
     
     int getThrottleNormalized() {
-        int val = map(currentState.throttle, 0, 4095, -100, 100);
-        return constrain(val, -100, 100);
+        return currentState.throttle; // Already mapped in update()
     }
 };
 
