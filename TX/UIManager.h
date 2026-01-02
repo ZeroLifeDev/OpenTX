@@ -27,13 +27,8 @@ private:
     ScreenMenu screenMenu;
     ScreenNotification screenNotification; 
     
-    // Better Input Handling
     unsigned long lastInputTime = 0;
-    const unsigned long DEBOUNCE = 200; // Slower debounce to prevent double skips
-    
-    // Previous states for edge detection to allow "Hold to scroll" or just "Click"
-    bool lastTrimP = false;
-    bool lastTrimM = false;
+    const unsigned long DEBOUNCE = 250; // Slower debounce
 
 public:
     void init() {
@@ -57,7 +52,6 @@ public:
             return; 
         }
 
-        // Inputs (Active Low)
         bool btnMenu = !digitalRead(PIN_BTN_MENU);
         bool btnSet  = !digitalRead(PIN_BTN_SET);
         bool btnPlus = !digitalRead(PIN_BTN_TRIM_PLUS);
@@ -66,66 +60,69 @@ public:
         unsigned long now = millis();
         if (now - lastInputTime > DEBOUNCE) {
             
-            // MENU TOGGLE
-            if (btnMenu) {
-                lastInputTime = now;
-                soundManager.playBack();
-                if (currentState == SCREEN_MENU) currentState = SCREEN_DASHBOARD;
-                else currentState = SCREEN_MENU;
-                return;
-            }
-
-            // STATE LOGIC
+            // --- STATE MACHINE ---
             switch (currentState) {
-                // DASHBOARD MODE
+                
+                // 1. DASHBOARD Mode
+                // MENU -> Go to Menu
+                // SET  -> Reset Trim
+                // TRIM -> Adjust Trim (Handled by InputManager, but we assume we want simple feedback here?)
                 case SCREEN_DASHBOARD:
+                    if (btnMenu) {
+                        lastInputTime = now;
+                        currentState = SCREEN_MENU;
+                        soundManager.playBack();
+                    }
                     if (btnSet) {
                          lastInputTime = now;
                          inputManager.resetTrim();
-                         showPopup("TRIM ZERO", "AXIS RESET", COLOR_ACCENT_2);
+                         showPopup("TRIM RESET", "CENTERED", COLOR_ACCENT_2);
                          soundManager.playConfirm();
                     }
-                    // Dashboard uses Trim buttons for actual trimming in InputManager::update(), 
-                    // so we don't handle them here unless we want UI feedback.
-                    // But InputManager handles the trim counters.
+                    // Trim buttons work natively in InputManager, no logic needed here except maybe sound
+                    if (btnPlus || btnMinus) {
+                        lastInputTime = now;
+                        soundManager.playClick();
+                    }
                     break;
 
-                // MENU MODE
+                // 2. MENU Mode
+                // MENU -> Cycle Option (User Request)
+                // SET  -> Select Option
+                // TRIM -> Nothing (Or Scroll?)
                 case SCREEN_MENU:
-                    // Navigation
-                    if (btnPlus) {
-                        lastInputTime = now; // consume input
-                        screenMenu.next();
-                        soundManager.playClick();
-                    }
-                    if (btnMinus) {
+                    if (btnMenu) {
+                        // User wants MENU to loop through options
                         lastInputTime = now;
-                        screenMenu.prev();
-                        soundManager.playClick();
+                        screenMenu.next();
+                        soundManager.playClick(); 
                     }
                     
-                    // Select
                     if (btnSet) {
                         lastInputTime = now;
                         soundManager.playConfirm();
                         int sel = screenMenu.getSelection();
-                        if (sel == 0) currentState = SCREEN_DASHBOARD;
-                        else if (sel == 1) currentState = SCREEN_DEBUG;
-                        else if (sel == 2) showPopup("SETTINGS", "NOT AVAILABLE", COLOR_ACCENT_3);
-                        else if (sel == 3) showPopup("FIRMWARE", "v2.2 STABLE", COLOR_TEXT_MAIN);
+                        
+                        // Action
+                        if (sel == 0) currentState = SCREEN_DASHBOARD; // "DASHBOARD"
+                        else if (sel == 1) currentState = SCREEN_DEBUG; // "TELEMETRY"
+                        else if (sel == 2) showPopup("SETTINGS", "LOCKED", COLOR_ACCENT_3);
+                        else if (sel == 3) showPopup("FIRMWARE", "v2.5 PRO", COLOR_TEXT_MAIN);
                     }
                     break;
                     
-                // DEBUG MODE
+                // 3. DEBUG Mode
+                // MENU/SET -> Exit
                 case SCREEN_DEBUG:
                     screenDebug.update();
-                    if (btnSet) {
+                    if (btnMenu || btnSet) {
                         lastInputTime = now;
                         currentState = SCREEN_MENU;
                         soundManager.playBack();
                     }
                     break;
             }
+        
         }
         
         // Intro Logic
