@@ -36,91 +36,105 @@ public:
     void update() {
         // Priority: Popup Update
         if (screenPopup.isVisible()) {
-            screenPopup.update();
-            // Don't block background updates entirely if we want live bg, 
-            // but for inputs we might want to block? 
-            // Let's allow background updates but block input parsing for screen switching.
+        // Handle Popup Animations
+        if (screenPopup.isActive) {
+            if (screenPopup.isFinished()) {
+                 screenPopup.hide();
+            }
+            return; // Block input while popup active
         }
 
-        // Sound Feedback for Trim (Check Edge)
-        if (inputManager.currentState.btnTrimPlus && !inputManager.lastState.btnTrimPlus) {
-             soundManager.beepClick();
+        bool btnMenu = digitalRead(PIN_BTN_MENU) == LOW;
+        bool btnSet  = digitalRead(PIN_BTN_SET) == LOW;
+        bool trimP   = digitalRead(PIN_BTN_TRIM_PLUS) == LOW;
+        bool trimM   = digitalRead(PIN_BTN_TRIM_MINUS) == LOW;
+
+        // Intro Logic
+        if (currentState == SCREEN_INTRO) {
+            screenIntro.update();
+            if (screenIntro.isFinished()) {
+                currentState = SCREEN_DASHBOARD;
+                displayManager.beginFrame(); // Clear
+                displayManager.endFrame();
+            }
+            return;
         }
-        if (inputManager.currentState.btnTrimMinus && !inputManager.lastState.btnTrimMinus) {
-             soundManager.beepClick();
+
+        // Global: Menu Button Logic
+        if (btnMenu && !lastBtnMenu) {
+            // Toggle Main -> Menu -> Debug -> Main
+            soundManager.playClick();
+            if (currentState == SCREEN_DASHBOARD) currentState = SCREEN_MENU;
+            else if (currentState == SCREEN_MENU) currentState = SCREEN_DEBUG;
+            else currentState = SCREEN_DASHBOARD;
+        }
+
+        // Screen Specific Logic
+        if (currentState == SCREEN_DASHBOARD) {
+            // Set Button -> Reset Trim
+            if (btnSet && !lastBtnSet) {
+                 inputManager.resetTrim();
+                 showPopup("TRIM RESET", "CENTERED", COLOR_ACCENT);
+                 soundManager.playConfirm();
+            }
+            // Gyro Switch is handled in InputManager but we can show popup
+            static bool lastGyro = false;
+            if (inputManager.currentState.swGyro != lastGyro) {
+                lastGyro = inputManager.currentState.swGyro;
+                if (lastGyro) {
+                     showPopup("GYRO SYSTEM", "ENABLED", COLOR_ACCENT);
+                     soundManager.playGyroOn();
+                } else {
+                     showPopup("GYRO SYSTEM", "DISABLED", COLOR_ACCENT_ALT);
+                     soundManager.playGyroOff();
+                }
+            }
+        }
+        else if (currentState == SCREEN_MENU) {
+            // Use Trim Buttons to Navigate
+            if (trimP && !lastTrimPlus) {
+                screenMenu.next();
+                soundManager.playClick();
+            }
+            if (trimM && !lastTrimMinus) {
+                screenMenu.prev();
+                soundManager.playClick();
+            }
+            if (btnSet && !lastBtnSet) {
+                // Select Action
+                soundManager.playConfirm();
+                // For now, simplify: just go back to dash or debug based on selection?
+                // Or just placeholder
+            }
+        }
+        else if (currentState == SCREEN_DEBUG) {
+            screenDebug.update();
         }
         
-        // Sound Feedback & Cutscene for Gyro
-        if (inputManager.currentState.swGyro != inputManager.lastState.swGyro) {
-             if (inputManager.currentState.swGyro) {
-                 soundManager.playGyroOn();
-                 screenPopup.show("GYRO SYSTEM", "ENGAGED", 1500, COLOR_ACCENT);
-             } else {
-                 soundManager.playGyroOff();
-                 screenPopup.show("GYRO SYSTEM", "DISABLED", 1500, COLOR_ACCENT_ALT);
-             }
-        }
-
-        switch (currentScreen) {
-            case SCREEN_INTRO:
-                screenIntro.update();
-                if (screenIntro.isFinished()) {
-                    currentScreen = SCREEN_MAIN;
-                }
-                break;
-                
-            case SCREEN_MAIN:
-                if (!screenPopup.isVisible()) {
-                    // Switch to Debug on Menu Button Press
-                    if (inputManager.isMenuPressed()) {
-                        soundManager.beepConfirm();
-                        currentScreen = SCREEN_DEBUG;
-                    }
-                    // Use SET button to Reset Trim
-                    if (inputManager.isSetPressed()) {
-                        soundManager.beep();
-                        inputManager.internalTrim = 0;
-                        screenPopup.show("TRIM RESET", "CENTERED", 1000, COLOR_HIGHLIGHT);
-                    }
-                }
-                break;
-                
-            case SCREEN_DEBUG:
-                screenDebug.update();
-                if (!screenPopup.isVisible()) {
-                    // Exit Debug on Menu Button Press
-                    if (inputManager.isMenuPressed()) {
-                        soundManager.beepConfirm();
-                        currentScreen = SCREEN_MAIN;
-                    }
-                }
-                break;
-        }
+        lastBtnMenu = btnMenu;
+        lastBtnSet = btnSet;
+        lastTrimPlus = trimP;
+        lastTrimMinus = trimM;
     }
 
     void draw() {
         displayManager.beginFrame();
-        
-        switch (currentScreen) {
-            case SCREEN_INTRO:
-                screenIntro.draw(&displayManager);
-                break;
-                
-            case SCREEN_MAIN:
-                screenDashboard.draw(&displayManager);
-                break;
-                
-            case SCREEN_DEBUG:
-                screenDebug.draw(&displayManager);
-                break;
-        }
 
-        // Draw Overlay Layer
-        if (screenPopup.isVisible()) {
-            screenPopup.draw(&displayManager);
+        switch (currentState) {
+            case SCREEN_INTRO: screenIntro.draw(&displayManager); break;
+            case SCREEN_DASHBOARD: screenDashboard.draw(&displayManager); break;
+            case SCREEN_MENU: screenMenu.draw(&displayManager); break;
+            case SCREEN_DEBUG: screenDebug.draw(&displayManager); break;
         }
+        
+        // Draw Popup Overlay on top
+        screenPopup.draw(&displayManager);
 
         displayManager.endFrame();
+    }
+    
+    void showPopup(const char* msg, const char* sub, uint16_t color) {
+        screenPopup.show(msg, sub, color);
     }
 };
 

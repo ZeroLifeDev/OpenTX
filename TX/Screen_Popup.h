@@ -15,50 +15,57 @@ private:
     uint16_t color;
 
 public:
-    void show(String msg, String subMsg, int ms, uint16_t c = COLOR_ACCENT) {
+    void show(const char* msg, const char* sub, uint16_t col) {
         message = msg;
-        subMessage = subMsg;
-        duration = ms;
-        color = c;
+        subMessage = sub;
+        color = col;
         startTime = millis();
         isActive = true;
     }
-
-    void update() {
-        if (!isActive) return;
-        if (millis() - startTime > duration) {
-            isActive = false;
-        }
+    
+    void hide() { isActive = false; }
+    
+    bool isFinished() {
+        return (millis() - startTime > duration);
     }
-
+    
     void draw(DisplayManager* display) {
         if (!isActive) return;
         
         TFT_eSprite* sprite = display->getSprite();
         
-        // Compute overlay rect (centered)
-        int w = SCREEN_WIDTH - 20;
-        int h = 60;
-        int x = 10;
+        long elapsed = millis() - startTime;
+        
+        // "Among Us" Style:
+        // 1. Full Screen Tint/Overlay? No, just heavy bars.
+        // 2. Animate Bars entering from sides? 
+        // Let's do a simple expanding center bar.
+        
+        int h = 50;
         int y = (SCREEN_HEIGHT - h) / 2;
         
-        // Draw Box with Animation (Pop in effect simulated by just drawing for now)
-        sprite->fillRoundRect(x, y, w, h, 6, COLOR_BG_PANEL);
-        sprite->drawRoundRect(x, y, w, h, 6, color);
+         // Animation: Expand Height
+        if (elapsed < 100) h = map(elapsed, 0, 100, 0, 50);
         
-        // Text
-        sprite->setTextDatum(MC_DATUM);
-        sprite->setTextColor(color, COLOR_BG_PANEL);
-        sprite->drawString(message, SCREEN_WIDTH/2, y + 20, FONT_BODY);
+        // Black Bar Background
+        sprite->fillRect(0, y, SCREEN_WIDTH, h, COLOR_BG_DARK);
         
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
-        sprite->drawString(subMessage, SCREEN_WIDTH/2, y + 40, FONT_SMALL);
+        // Borders (Top/Bottom)
+        sprite->drawFastHLine(0, y, SCREEN_WIDTH, color);
+        sprite->drawFastHLine(0, y+h-1, SCREEN_WIDTH, color);
         
-        // Progress bar for timeout?
-        int timeParams = millis() - startTime;
-        int barW = map(timeParams, 0, duration, 0, w - 10);
-        sprite->fillRect(x+5, y+h-4, w-10, 2, COLOR_BG_DARK);
-        sprite->fillRect(x+5, y+h-4, barW, 2, color);
+        // Strobe Effect for Text
+        bool showText = true;
+        if (elapsed < 300 && (elapsed / 50) % 2 == 0) showText = false;
+        
+        if (showText) {
+            sprite->setTextColor(color, COLOR_BG_DARK);
+            sprite->setTextDatum(MC_DATUM);
+            sprite->drawString(message, SCREEN_WIDTH/2, y + 15, FONT_BODY);
+            
+            sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
+            sprite->drawString(subMessage, SCREEN_WIDTH/2, y + 35, FONT_SMALL);
+        }
     }
     
     bool isVisible() {
