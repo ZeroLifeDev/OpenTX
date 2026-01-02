@@ -4,22 +4,22 @@
 #include <Arduino.h>
 #include "HardwareConfig.h"
 
-// Sound Config
+// ==========================================
+//          CINEMATIC SOUND ENGINE
+// ==========================================
+
 #define BUZZER_CHANNEL 0
 #define BUZZER_RES 8
 
-// Note Frequencies (Increased by ~50% for cleaner tone)
-#define NOTE_C5 784  // Was C5 (523)
-#define NOTE_D5 880
-#define NOTE_E5 988
-#define NOTE_F5 1046
-#define NOTE_G5 1175
-#define NOTE_A5 1318
-#define NOTE_B5 1480
-#define NOTE_C6 1568
-#define NOTE_E6 1979
-#define NOTE_G6 2352
-#define NOTE_C7 3136
+// High-Fidelity Notes
+#define NOTE_C5 523
+#define NOTE_E5 659
+#define NOTE_G5 784
+#define NOTE_C6 1047
+#define NOTE_E6 1319
+#define NOTE_G6 1568
+#define NOTE_C7 2093
+#define NOTE_E7 2637
 
 class SoundManager {
 private:
@@ -42,50 +42,93 @@ public:
         delay(duration);
         ledcWrite(PIN_BUZZER, 0);
     }
-
-    // Gentle Chirp
-    void playConnected() {
+    
+    void playChirp(int startFreq, int endFreq, int duration) {
         if (!enabled) return;
-        playTone(NOTE_C6, 60, 100);
-        delay(30);
-        playTone(NOTE_E6, 60, 100);
-    }
-
-    // Critical Alarm (Higher pitch)
-    void playDisconnected() {
-        if (!enabled) return;
-        for(int k=0; k<2; k++) {
-            playTone(2500, 100, 200);
-            delay(50);
-            playTone(2000, 100, 200);
-        }
-    }
-
-    // Fast Sweep
-    void beepStartup() {
-        if (!enabled) return;
-        for (int i=1000; i<3000; i+=200) {
-            ledcAttach(PIN_BUZZER, i, BUZZER_RES);
-            ledcWrite(PIN_BUZZER, 100);
-            delay(3);
+        int steps = 10;
+        int stepDelay = duration / steps;
+        int freqStep = (endFreq - startFreq) / steps;
+        
+        for (int i=0; i<steps; i++) {
+             ledcAttach(PIN_BUZZER, startFreq + (i*freqStep), BUZZER_RES);
+             ledcWrite(PIN_BUZZER, 100);
+             delay(stepDelay);
         }
         ledcWrite(PIN_BUZZER, 0);
+    }
+
+    // --- CINEMATIC SEQUENCES ---
+
+    // "Turbine Spool-up" Startup
+    // Low rumble rising to high pitch scream + confirmation ping
+    void playStartupPro() {
+        if (!enabled) return;
+        
+        // 1. Rumble (Low Freq Sweep)
+        for(int f=100; f<800; f+=20) {
+            ledcAttach(PIN_BUZZER, f, BUZZER_RES);
+            ledcWrite(PIN_BUZZER, 80);
+            delay(5);
+        }
+        
+        // 2. Turbine Whine (High Freq Sweep)
+        for(int f=800; f<3000; f+=100) {
+            ledcAttach(PIN_BUZZER, f, BUZZER_RES);
+            ledcWrite(PIN_BUZZER, 120);
+            delay(2);
+        }
+        
+        ledcWrite(PIN_BUZZER, 0);
         delay(50);
-        playTone(NOTE_C7, 150, 150);
+        
+        // 3. System Online (Double Ping)
+        playTone(NOTE_C7, 80, 150);
+        delay(40);
+        playTone(NOTE_E7, 150, 200);
+    }
+
+    // Gyro: Shield Charge (Rising Power)
+    void playGyroEffect(bool active) {
+        if (!enabled) return;
+        if (active) {
+            // Charge Up
+            playChirp(1000, 3000, 150);
+        } else {
+            // Power Down
+            playChirp(3000, 500, 150);
+        }
     }
     
-    // UI Sounds - Short & Crisp
-    void playClick() { playTone(2500, 10, 80); } 
-    void playConfirm() { playTone(1500, 40, 100); delay(30); playTone(2200, 60, 100); }
-    void playBack() { playTone(2200, 40, 100); delay(30); playTone(1500, 60, 100); }
+    // UI: High Tech Ticks
+    void playClick() { playTone(2500, 5, 50); } // Tiny Tick
     
-    // Gyro
-    void playGyroOn() {
-        playTone(NOTE_E6, 40); delay(20); playTone(NOTE_G6, 80);
+    void playConfirm() { 
+        playTone(1500, 40, 100); 
+        delay(20); 
+        playTone(2500, 60, 100); 
     }
-    void playGyroOff() {
-        playTone(NOTE_G6, 40); delay(20); playTone(NOTE_E6, 80);
+    
+    void playBack() { 
+        playTone(2500, 40, 100); 
+        delay(20); 
+        playTone(1500, 60, 100); 
     }
+    
+    // Connect/Disconnect
+    void playConnected() {
+        playTone(NOTE_C6, 50); delay(50); playTone(NOTE_G6, 100);
+    }
+    
+    void playDisconnected() {
+        for(int i=0; i<3; i++) {
+            playTone(3000, 50); delay(50); playTone(2000, 50);
+        }
+    }
+    
+    // Legacy support wrappers
+    void beepStartup() { playStartupPro(); }
+    void playGyroOn() { playGyroEffect(true); }
+    void playGyroOff() { playGyroEffect(false); }
 };
 
 // Global Instance
