@@ -14,18 +14,19 @@ struct DashboardState {
     AnimFloat steerVal;
     
     // Animation States
-    AnimFloat gyroAnim; // 0.0 to 1.0 expansion
+    AnimFloat gyroAnim; // 0.0 to 100.0 (Expansion)
+    AnimFloat gyroRot;  // Rotation for "Target"
     bool lastGyroState;
     
     ScanLine bgScan;
-    
-    MicroJitter jitter; // For "Realism" noise
+    MicroJitter jitter; 
     
     DashboardState() : 
         throttleVal(0, 0.15f, 0.85f), 
         steerVal(0, 0.2f, 0.7f), 
-        gyroAnim(0, 0.1f, 0.9f),
-        bgScan(0, SCREEN_HEIGHT, 1.5f),
+        gyroAnim(0, 0.1f, 0.85f),
+        gyroRot(0, 0.05f, 0.95f),
+        bgScan(0, SCREEN_HEIGHT, 1.0f),
         jitter(2),
         lastGyroState(false)
     {}
@@ -34,7 +35,6 @@ struct DashboardState {
 class ScreenDashboard {
 private:
     DashboardState state;
-    bool needsFullRedraw = true;
 
 public:
     void draw(DisplayManager* display) {
@@ -53,128 +53,134 @@ public:
         bool currentGyro = inputManager.currentState.swGyro;
         if (currentGyro != state.lastGyroState) {
             if (currentGyro) {
-                state.gyroAnim.snap(0); // Reset
-                state.gyroAnim.target = 100.0f; // Expand
+                state.gyroAnim.snap(0); 
+                state.gyroAnim.target = 100.0f; 
+                state.gyroRot.velocity = 20.0f; // Spin up
             } else {
-                state.gyroAnim.target = 0.0f; // Collapse
+                state.gyroAnim.target = 0.0f; 
             }
             state.lastGyroState = currentGyro;
         }
         state.gyroAnim.update();
+        if (currentGyro) state.gyroRot.target += 2.0f; // Constant rotation
+        state.gyroRot.update();
 
-        // --- 2. Background Rendering (Complex) ---
-        sprite->fillSprite(COLOR_BG_MAIN);
+        // --- 2. Background Rendering (Cyber-Noir) ---
+        sprite->fillSprite(COLOR_BG_MAIN); // Deep Black
         
-        // Draw Grid
-        // sprite->setColor(COLOR_BG_SHADOW); // Deleted, not supported
+        // Subtle Grid (Darker)
         for (int x=0; x<SCREEN_WIDTH; x+=CELL_W) sprite->drawFastVLine(x, 0, SCREEN_HEIGHT, COLOR_BG_SHADOW);
         for (int y=0; y<SCREEN_HEIGHT; y+=CELL_H) sprite->drawFastHLine(0, y, SCREEN_WIDTH, COLOR_BG_SHADOW);
         
-        // Draw Scanning Line (Cyber Effect)
-        sprite->drawFastHLine(0, state.bgScan.y(), SCREEN_WIDTH, COLOR_ACCENT_2);
+        // Vignette / Scanline
+        int scanY = state.bgScan.y();
+        if (scanY < SCREEN_HEIGHT) sprite->drawFastHLine(0, scanY, SCREEN_WIDTH, COLOR_BG_PANEL);
         
-        // --- 3. Main Tachometer (Overengineered) ---
+        // --- 3. Main Tachometer (Center) ---
         int cx = SCREEN_WIDTH / 2;
-        int cy = 70;
-        int r = 52;
+        int cy = 75;
+        int r = 50;
         
-        // Draw "Tech" Ring
-        // Dashed Circle
-        for (int angle = 0; angle < 360; angle += 15) {
-             float rad = angle * DEG_TO_RAD;
-             int x1 = cx + cos(rad) * r;
-             int y1 = cy + sin(rad) * r;
-             int x2 = cx + cos(rad) * (r+4);
-             int y2 = cy + sin(rad) * (r+4);
-             sprite->drawLine(x1, y1, x2, y2, COLOR_TEXT_SUB);
-        }
+        // Outer Tech Ring
+        sprite->drawCircle(cx, cy, r, COLOR_BG_PANEL);
         
-        // Throttle Arc
-        // Map -100..100 to Angle 135..405
-        float tVal = state.throttleVal.val(); // Smoothed
+        int tVal = (int)state.throttleVal.val();
+        
+        // RPM Arcs
         int startAngle = 135;
-        int sweep = map((long)abs(tVal), 0, 100, 0, 270);
+        int sweep = map(abs(tVal), 0, 100, 0, 270);
         
-        // If reversing, change color
-        uint16_t barColor = (tVal < 0) ? COLOR_ACCENT_3 : COLOR_ACCENT_2;
-        if (abs(tVal) > 90) barColor = COLOR_ACCENT_1; // Critical Red at high speed
+        // Dynamic Color based on speed
+        uint16_t arcColor = COLOR_ACCENT_3; // Cyan
+        if (abs(tVal) > 50) arcColor = COLOR_WARNING;
+        if (abs(tVal) > 85) arcColor = COLOR_DANGER;
         
-        // Draw Arc (manually for thickness)
-        for (int i=0; i<sweep; i+=4) {
+        // Draw Arc
+        for (int i=0; i<sweep; i+=3) {
              float rad = (startAngle + i) * DEG_TO_RAD;
-             // Add jitter to radius for "Power Surge" effect
-             int jitterR = (abs(tVal) > 50) ? state.jitter.get() : 0;
-             int x = cx + cos(rad) * (r - 2 + jitterR);
-             int y = cy + sin(rad) * (r - 2 + jitterR);
-             sprite->fillCircle(x, y, 3, barColor);
+             int rx = cx + cos(rad) * (r-2);
+             int ry = cy + sin(rad) * (r-2);
+             sprite->drawPixel(rx, ry, arcColor);
+             // Thick
+             rx = cx + cos(rad) * (r-3);
+             ry = cy + sin(rad) * (r-3);
+             sprite->drawPixel(rx, ry, arcColor);
         }
         
-        // Digital Readout (Rolling Counter Simulation)
-        int dispSpeed = map((long)abs(tVal), 0, 100, 0, 999);
+        // Center Speedo (Rolling Counter)
+        int dispSpeed = map(abs(tVal), 0, 100, 0, 999);
         sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
         sprite->setTextDatum(MC_DATUM);
-        sprite->drawNumber(dispSpeed, cx, cy, FONT_DIGIT);
+        sprite->drawNumber(dispSpeed, cx, cy - 5, FONT_DIGIT);
         
-        // Decoration Text
-        sprite->setTextColor(COLOR_TEXT_MUTED, COLOR_BG_MAIN);
-        sprite->setTextDatum(TC_DATUM);
-        sprite->drawString("VELOCITY", cx, cy + 30, FONT_MICRO);
+        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_MAIN);
+        sprite->drawString("KPH", cx, cy + 20, FONT_MICRO);
 
-        // --- 4. Steering Bar (Bottom) ---
-        int steerY = 130;
-        float sVal = state.steerVal.val();
-        int center = SCREEN_WIDTH/2;
-        int maxW = (SCREEN_WIDTH-20)/2;
+        // --- 4. Steering (Bottom) ---
+        int steerY = 135;
+        int sVal = (int)state.steerVal.val();
+        int bW = (SCREEN_WIDTH - 30) / 2;
         
-        // Frame
-        sprite->drawRect(8, steerY-2, SCREEN_WIDTH-16, 8, COLOR_TEXT_SUB);
+        sprite->drawFastHLine(15, steerY, SCREEN_WIDTH-30, COLOR_BG_PANEL);
+        sprite->drawFastVLine(cx, steerY-3, 6, COLOR_TEXT_MUTED); // Center mark
         
-        // Bar
-        if (sVal > 0) {
-            int w = map((long)sVal, 0, 100, 0, maxW);
-            sprite->fillRect(center, steerY, w, 4, COLOR_ACCENT_4);
-        } else {
-             int w = map((long)abs(sVal), 0, 100, 0, maxW);
-             sprite->fillRect(center-w, steerY, w, 4, COLOR_ACCENT_4);
+        if (sVal != 0) {
+            int len = map(abs(sVal), 0, 100, 0, bW);
+            if (sVal > 0) sprite->fillRect(cx, steerY-1, len, 3, COLOR_ACCENT_3);
+            else sprite->fillRect(cx-len, steerY-1, len, 3, COLOR_ACCENT_3);
         }
+
+        // --- 5. Suspension Gauge (New Feature) ---
+        // Vertical Bar on Right
+        int suspVal = inputManager.currentState.potSuspension; // 0-4095
+        int sH = map(suspVal, 0, 4095, 0, 60);
+        int barX = SCREEN_WIDTH - 8;
+        int barY = 40;
+        int barMax = 60;
         
-        // --- 5. Connection Status (Top Left) ---
-        bool linked = commsManager.isConnected();
-        uint16_t linkColor = linked ? COLOR_SUCCESS : COLOR_DANGER;
-        if (!linked && (millis()/200)%2==0) linkColor = COLOR_BG_MAIN; // Fast Blink
+        // Container
+        sprite->drawRect(barX, barY, 4, barMax, COLOR_BG_PANEL);
+        // Fill
+        sprite->fillRect(barX+1, barY + (barMax - sH), 2, sH, COLOR_ACCENT_2); // Green fill
         
-        sprite->setTextDatum(TL_DATUM);
-        sprite->setTextColor(linkColor, COLOR_BG_MAIN);
-        sprite->drawString(linked ? "LINK ACTIVE" : "NO CARRIER", 5, 5, FONT_LABEL);
-        
-        // --- 6. GYRO ACTIVATION SEQUENCE (The "Cool" Animation) ---
-        // If Gyro is ON, draw the HUD elements
-        float gAnim = state.gyroAnim.val(); // 0 to 100
+        // Label
+        sprite->setTextDatum(TC_DATUM);
+        sprite->drawString("S", barX+2, barY - 10, FONT_MICRO);
+
+
+        // --- 6. GYRO TARGET SYSTEM (The "Target" Request) ---
+        float gAnim = state.gyroAnim.val();
         
         if (gAnim > 1.0f) {
-            // Draw Target Reticle expanding
+            // "Sniper" Scope Effect
             int size = map((long)gAnim, 0, 100, 0, 60);
-            int alpha = map((long)gAnim, 0, 100, 255, 100); // Fade? No alpha support in basic lib, simulate with line skipping?
+            float rotation = state.gyroRot.val();
             
-            // Draw Crosshairs
-            sprite->drawCircle(cx, cy, size, COLOR_ACCENT_3);
-            sprite->drawCircle(cx, cy, size/2, COLOR_ACCENT_3);
+            // 4 Corner Brackets expanding in
+            // Use polar coordinates for rotation
+            for (int i=0; i<4; i++) {
+                float ang = (rotation + (i * 90)) * DEG_TO_RAD;
+                int x = cx + cos(ang) * size;
+                int y = cy + sin(ang) * size;
+                sprite->drawCircle(x, y, 2, COLOR_ACCENT_1);
+            }
             
-            sprite->drawLine(cx-size-10, cy, cx+size+10, cy, COLOR_ACCENT_3);
-            sprite->drawLine(cx, cy-size-10, cx, cy+size+10, COLOR_ACCENT_3);
-            
-            // "Lock On" Text
+            // Inner Reticle
             if (gAnim > 80) {
-                 sprite->setTextColor(COLOR_ACCENT_3, COLOR_BG_MAIN); // No bg fill to overlay
-                 sprite->drawString("GYRO STABILIZED", cx, cy - size - 15, FONT_MICRO);
+                 sprite->drawCircle(cx, cy, 15, COLOR_ACCENT_1);
+                 sprite->drawLine(cx-20, cy, cx+20, cy, COLOR_ACCENT_1);
+                 sprite->drawLine(cx, cy-20, cx, cy+20, COLOR_ACCENT_1);
+                 
+                 sprite->setTextColor(COLOR_ACCENT_1, COLOR_BG_MAIN);
+                 sprite->drawString("TARGET LOCKED", cx, cy - 40, FONT_MICRO);
             }
         }
-        
-        // --- 7. Footer Info ---
-        sprite->setTextDatum(BC_DATUM);
-        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_MAIN);
-        String trimStr = "AXIS TRIM: " + String(inputManager.currentState.trimLevel);
-        sprite->drawString(trimStr, cx, SCREEN_HEIGHT-2, FONT_MICRO);
+
+        // --- 7. Status Header ---
+        bool linked = commsManager.isConnected();
+        sprite->setTextColor(linked ? COLOR_ACCENT_2 : COLOR_ACCENT_1, COLOR_BG_MAIN);
+        sprite->setTextDatum(TL_DATUM);
+        sprite->drawString(linked ? "[LINK]" : "[VOID]", 4, 4, FONT_MICRO);
     }
 };
 

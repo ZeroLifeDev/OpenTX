@@ -26,16 +26,20 @@ private:
     ScreenDebug screenDebug;
     ScreenPopup screenPopup;
     ScreenMenu screenMenu;
-    ScreenNotification screenNotification; // The Among Us Notifier
+    ScreenNotification screenNotification; 
     
-    // Previous button states for edge detection in UI
-    bool lastBtnMenu = false;
-    bool lastBtnSet = false;
-    bool lastTrimPlus = false;
-    bool lastTrimMinus = false;
+    // Input Handling (Debounce)
+    unsigned long lastInputTime = 0;
+    const unsigned long DEBOUNCE_DELAY = 150; // ms
 
 public:
     void init() {
+        // Ensure pins are set (Redundant safety)
+        pinMode(PIN_BTN_MENU, INPUT_PULLUP);
+        pinMode(PIN_BTN_SET, INPUT_PULLUP);
+        pinMode(PIN_BTN_TRIM_PLUS, INPUT_PULLUP);
+        pinMode(PIN_BTN_TRIM_MINUS, INPUT_PULLUP);
+        
         screenIntro.init();
         screenDebug.init();
         screenMenu.init(); 
@@ -43,78 +47,88 @@ public:
     } 
     
     void update() {
-        // Overlay Management (Priority)
-        // Check Notification first (Highest Priority - Emergency)
+        // Overlay Priority
         screenNotification.update();
-        if (screenNotification.isActive()) return; // Block input
+        if (screenNotification.isActive()) return;
 
         if (screenPopup.isVisible()) {
             if (screenPopup.isFinished()) screenPopup.hide();
             return; 
         }
 
-        bool btnMenu = digitalRead(PIN_BTN_MENU) == LOW;
+        // --- Robust Input Handling ---
+        // Read raw states
+        bool btnMenu = digitalRead(PIN_BTN_MENU) == LOW; // Active Low
         bool btnSet  = digitalRead(PIN_BTN_SET) == LOW;
         bool trimP   = digitalRead(PIN_BTN_TRIM_PLUS) == LOW;
         bool trimM   = digitalRead(PIN_BTN_TRIM_MINUS) == LOW;
         
-        // Edge Detect
-        bool pMenu = btnMenu && !lastBtnMenu;
-        bool pSet = btnSet && !lastBtnSet;
-        bool pPlus = trimP && !lastTrimPlus;
-        bool pMinus = trimM && !lastTrimMinus;
+        // Simple Debounce / Cooldown
+        if (millis() - lastInputTime > DEBOUNCE_DELAY) {
+            
+            // Global Menu Toggle
+            if (btnMenu) {
+                lastInputTime = millis();
+                soundManager.playBack();
+                if (currentState == SCREEN_MENU) currentState = SCREEN_DASHBOARD;
+                else currentState = SCREEN_MENU;
+                return; // Early exit to prevent double-processing
+            }
 
-        // Intro Logic
+            // State Machine Logic
+            switch (currentState) {
+                case SCREEN_DASHBOARD:
+                    // Normal Driving
+                    if (btnSet) {
+                        lastInputTime = millis();
+                        inputManager.resetTrim();
+                        showPopup("TRIM RESET", "OK", COLOR_ACCENT_2);
+                        soundManager.playConfirm();
+                    }
+                    break;
+                    
+                case SCREEN_MENU:
+                    // Menu Navigation
+                    if (trimP) { 
+                        lastInputTime = millis();
+                        screenMenu.next(); 
+                        soundManager.playClick(); 
+                    }
+                    if (trimM) { 
+                        lastInputTime = millis();
+                        screenMenu.prev(); 
+                        soundManager.playClick(); 
+                    }
+                    if (btnSet) {
+                         lastInputTime = millis();
+                         soundManager.playConfirm();
+                         int sel = screenMenu.getSelection();
+                         if (sel == 0) currentState = SCREEN_DASHBOARD;
+                         else if (sel == 1) currentState = SCREEN_DEBUG;
+                         else if (sel == 2) showPopup("TRIM SETTINGS", "USE BUTTONS", COLOR_ACCENT_4); 
+                         else if (sel == 3) showPopup("OpenTX v2.1", "CYBER-NOIR", COLOR_TEXT_MAIN);
+                    }
+                    break;
+                    
+                case SCREEN_DEBUG:
+                    if (btnSet) { // Exit debug
+                        lastInputTime = millis();
+                        currentState = SCREEN_MENU;
+                    }
+                    screenDebug.update();
+                    break;
+            }
+        
+        } // End Debounce check
+
+        // Intro Logic (Independent)
         if (currentState == SCREEN_INTRO) {
             screenIntro.update();
             if (screenIntro.isFinished()) {
                 currentState = SCREEN_DASHBOARD;
                 soundManager.beepStartup(); 
             }
-            return;
         }
-
-        // Global Menu Toggle
-        if (pMenu) {
-            soundManager.playBack();
-            if (currentState == SCREEN_MENU) currentState = SCREEN_DASHBOARD;
-            else currentState = SCREEN_MENU;
-        }
-
-        // State Machine
-        switch (currentState) {
-            case SCREEN_DASHBOARD:
-                // Normal Driving
-                if (pSet) {
-                    inputManager.resetTrim();
-                    showPopup("TRIM RESET", "OK", COLOR_ACCENT);
-                    soundManager.playConfirm();
-                }
-                break;
-                
-            case SCREEN_MENU:
-                // Menu Navigation
-                if (pPlus) { screenMenu.next(); soundManager.playClick(); }
-                if (pMinus) { screenMenu.prev(); soundManager.playClick(); }
-                if (pSet) {
-                     soundManager.playConfirm();
-                     int sel = screenMenu.getSelection();
-                     if (sel == 0) currentState = SCREEN_DASHBOARD;
-                     else if (sel == 1) currentState = SCREEN_DEBUG;
-                     else if (sel == 2) showPopup("TRIM SETTINGS", "USE BUTTONS", COLOR_HIGHLIGHT); 
-                     else if (sel == 3) showPopup("OpenTX v2.0", "PROFESSIONAL", COLOR_TEXT_MAIN);
-                }
-                break;
-                
-            case SCREEN_DEBUG:
-                screenDebug.update();
-                break;
-        }
-        
-        lastBtnMenu = btnMenu;
-        lastBtnSet = btnSet;
-        lastTrimPlus = trimP;
-        lastTrimMinus = trimM;
     }
 
     void draw() {
@@ -127,10 +141,7 @@ public:
             case SCREEN_DEBUG: screenDebug.draw(&displayManager); break;
         }
         
-        // Draw Popup Overlay 
         screenPopup.draw(&displayManager);
-        
-        // Draw Critical Notifications (Top)
         screenNotification.draw(&displayManager);
 
         displayManager.endFrame();
@@ -140,7 +151,6 @@ public:
         screenPopup.show(msg, sub, color);
     }
     
-    // Call this from CommsManager or when needed
     void showNotification(String msg, String sub, uint16_t color) {
         screenNotification.show(msg, sub, color);
     }
