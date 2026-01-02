@@ -2,8 +2,12 @@
 #define DISPLAY_MANAGER_H
 
 #include "HardwareConfig.h" 
-#include <TFT_eSPI.h> // Make sure to edit User_Setup.h to select ILI9163_DRIVER
+#include <TFT_eSPI.h> 
 #include "Theme.h"
+
+// ==========================================
+//          ILI9163 DRIVER CORE
+// ==========================================
 
 class DisplayManager {
 private:
@@ -15,15 +19,24 @@ public:
 
     void init() {
         tft.init();
-        tft.setRotation(0); 
-        tft.fillScreen(COLOR_BG_DARK);
         
-        // ILI9163 usually matches ST7735 BGR/RGB needs
+        // --- ILI9163 SPECIFIC FIXES ---
+        // 1. Rotation and Offsets
+        // ILI9163 128x160 often needs Rotation 0 for Portrait.
+        tft.setRotation(0); 
+        
+        // 2. Color Correction (Red/Blue Swap)
+        // Most generic 1.8" displays need SwapBytes enabled for 16-bit color.
         tft.setSwapBytes(true); 
+        
+        // 3. Black/Red Tab Offset Fix
+        // Sometimes needed: tft.writecommand(0x21); // Invert off
+        tft.fillScreen(COLOR_BG_MAIN);
 
+        // --- SPRITE BUFFER ---
         sprite.setColorDepth(16);
         sprite.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
-        sprite.setSwapBytes(true);
+        sprite.setSwapBytes(true); // Critical for Sprites too
     }
 
     TFT_eSprite* getSprite() {
@@ -31,42 +44,11 @@ public:
     }
 
     void beginFrame() {
-        sprite.fillSprite(COLOR_BG_DARK);
+        sprite.fillSprite(COLOR_BG_MAIN);
     }
 
     void endFrame() {
         sprite.pushSprite(0, 0);
-    }
-    
-    // Draw Header Helper
-    void drawHeader(const char* title) {
-        sprite.fillRect(0, 0, SCREEN_WIDTH, 20, COLOR_BG_PANEL);
-        sprite.drawFastHLine(0, 20, SCREEN_WIDTH, COLOR_ACCENT);
-        sprite.setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
-        sprite.setTextDatum(MC_DATUM);
-        sprite.drawString(title, SCREEN_WIDTH / 2, 11, FONT_SMALL);
-    }
-    
-    // Legacy Helpers not needed as we updated screens to use Sprite directly,
-    // but in case any GFX calls remain:
-    void setTextCentered(String text, int x, int y, int size) {
-        sprite.setTextDatum(MC_DATUM);
-        sprite.drawString(text, x, y, size);
-    }
-    
-    void setTextLeft(String text, int x, int y, int size) {
-        sprite.setTextDatum(TL_DATUM);
-        sprite.drawString(text, x, y, size);
-    }
-    
-    void drawArcSegment(int x, int y, int r, int startAngle, int endAngle, uint16_t color) {
-         // rough implementation for sprite
-         for (int i=startAngle; i<=endAngle; i+=5) {
-             float rad = i * DEG_TO_RAD;
-             int px = x + cos(rad) * r;
-             int py = y + sin(rad) * r;
-             sprite.drawPixel(px, py, color);
-        }
     }
 };
 

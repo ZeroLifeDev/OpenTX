@@ -7,72 +7,70 @@
 
 class ScreenIntro {
 private:
-    unsigned long startTime;
-    bool isComplete;
-    
-    // Animations
     AnimFloat logoY;
     AnimFloat lineW;
-    
+    unsigned long startTime;
+    bool complete;
+
 public:
-    ScreenIntro() : logoY(SCREEN_HEIGHT, 0.1f, 0.7f), lineW(0, 0.2f, 0.9f) {}
+    ScreenIntro() : logoY(0, 0.1f, 0.8f), lineW(0, 0.15f, 0.8f) {}
 
     void init() {
         startTime = millis();
-        isComplete = false;
-        logoY.snap(SCREEN_HEIGHT + 20); // Start below
-        logoY.target = SCREEN_HEIGHT/2 - 10; // Move to center
-        
-        lineW.snap(0);
-        lineW.target = SCREEN_WIDTH - 60;
+        complete = false;
+        logoY.reset(0);
+        logoY.target = 70;
+        lineW.reset(0);
+        lineW.target = 0;
     }
 
     void update() {
-        if (isComplete) return;
-        unsigned long elapsed = millis() - startTime;
+        if (complete) return;
         
         logoY.update();
         lineW.update();
         
-        if (elapsed > 3000) {
-            isComplete = true;
-        }
+        unsigned long elapsed = millis() - startTime;
+        
+        if (elapsed > 500) lineW.target = 100;
+        if (elapsed > 2000) complete = true;
     }
+
+    bool isFinished() { return complete; }
 
     void draw(DisplayManager* display) {
         TFT_eSprite* sprite = display->getSprite();
         
-        sprite->fillSprite(COLOR_BG_MAIN); // Light Theme
+        sprite->fillSprite(COLOR_BG_MAIN);
         
-        // Grid Background (Subtle)
-        for (int i=0; i<SCREEN_HEIGHT; i+=10) {
-             if (i % 20 == 0) sprite->drawFastHLine(0, i, SCREEN_WIDTH, COLOR_BG_SHADOW);
+        // Grid (Subtle)
+        for(int i=0; i<SCREEN_HEIGHT; i+=20) {
+             sprite->drawFastHLine(0, i, SCREEN_WIDTH, COLOR_BG_PANEL); // Fixed: COLOR_BG_SHADOW -> COLOR_BG_PANEL
         }
-
+        
         int cy = (int)logoY.val();
-        int cx = SCREEN_WIDTH/2;
+        int cx = SCREEN_WIDTH / 2;
         
-        // Main Logo
+        // Logo Text
+        sprite->setTextColor(COLOR_ACCENT_PRI, COLOR_BG_MAIN);
         sprite->setTextDatum(MC_DATUM);
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
-        sprite->drawString("OpenTX", cx, cy, FONT_HEADER);
+        sprite->drawString("OpenTX", cx, cy, FONT_LARGE); // Fixed: FONT_HEADER -> FONT_LARGE
         
-        // Tagline (Flashing)
-        if (millis() % 400 < 200) {
-            sprite->setTextColor(COLOR_ACCENT_3, COLOR_BG_MAIN);
-            sprite->drawString("SYSTEM READY", cx, cy + 25, FONT_MICRO);
+        sprite->setTextColor(COLOR_TEXT_DIM, COLOR_BG_MAIN);
+        sprite->drawString("PRO V3", cx, cy + 20, FONT_SMALL); // Fixed
+
+        // Loading Bar
+        int w = (int)lineW.val();
+        if (w > 0) {
+            sprite->fillRect(cx - w/2, cy + 40, w, 4, COLOR_ACCENT_PRI); // Fixed: COLOR_ACCENT_2 -> PRI
         }
         
-        // Loading Bars (Expanding)
-        int w = (int)lineW.val();
-        sprite->fillRect(cx - w/2, cy + 40, w, 4, COLOR_ACCENT_2);
-    }
-
-    bool isFinished() {
-        return isComplete;
+        // Tagline
+        if (millis() % 1000 < 500) {
+            sprite->setTextColor(COLOR_ACCENT_TER, COLOR_BG_MAIN); // Fixed: ACCENT_3 -> TER
+            sprite->drawString("SYSTEM READY", cx, cy + 55, FONT_SMALL); // Fixed: FONT_MICRO -> SMALL
+        }
     }
 };
-
-extern ScreenIntro screenIntro;
 
 #endif // SCREEN_INTRO_H

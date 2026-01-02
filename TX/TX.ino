@@ -24,7 +24,7 @@ void setup() {
     Serial.println("--- OpenTX OS STARTING ---");
 
     // 1. Initialize Hardware Inputs
-    Serial.println("Initializing Inputs...");
+    Serial.println("Initializing Inputs..."); 
     inputManager.init();
     Serial.println("Inputs Init Done");
 
