@@ -7,6 +7,7 @@
 #include "DisplayManager.h"
 #include "UIManager.h"
 #include "SoundManager.h"
+#include "CommsManager.h"
 
 // ==========================================
 //              SETUP
@@ -24,11 +25,14 @@ void setup() {
     soundManager.init();
     soundManager.beepStartup();
 
-    // 3. Initialize Display
+    // 3. Initialize Comms (ESP-NOW)
+    commsManager.init();
+
+    // 4. Initialize Display
     Serial.println("Initializing Display...");
     displayManager.init();
 
-    // 4. Initialize UI
+    // 5. Initialize UI
     Serial.println("Initializing UI...");
     uiManager.init();
 
@@ -44,13 +48,23 @@ void loop() {
     // 1. Update Inputs
     inputManager.update();
 
-    // 2. Update UI Logic
+    // 2. Transmit Data
+    commsManager.sendData(
+        inputManager.getSteeringNormalized(),
+        inputManager.getThrottleNormalized(),
+        inputManager.currentState.potSuspension,
+        inputManager.currentState.trimLevel,
+        inputManager.currentState.swGyro
+    );
+    commsManager.update();
+
+    // 3. Update UI Logic
     uiManager.update();
 
-    // 3. Draw UI
+    // 4. Draw UI
     uiManager.draw();
     
-    // 4. Debug Logging (Every 500ms)
+    // 5. Debug Logging (Every 500ms)
     if (millis() - lastLog > 500) {
         lastLog = millis();
         Serial.print("Steer: "); Serial.print(inputManager.currentState.steering);

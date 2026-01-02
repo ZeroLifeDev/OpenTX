@@ -35,6 +35,9 @@
 #define PIN_TFT_DC   25
 #define PIN_TFT_RST   4
 
+// Status LED
+#define PIN_LED_BUILTIN 2
+
 // --- System ---
 #define SERIAL_BAUD 115200
 
