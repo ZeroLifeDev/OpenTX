@@ -17,6 +17,7 @@
 #include "Screen_Settings.h"
 #include "Screen_Popup.h"
 #include "Screen_Notification.h"
+#include "Screen_Calibration.h"
 
 // State Enumeration
 enum ScreenState {
@@ -25,6 +26,7 @@ enum ScreenState {
     SCREEN_MENU,
     SCREEN_TELEMETRY,
     SCREEN_SETTINGS,
+    SCREEN_CALIBRATION,
     
     // New Apps
     SCREEN_APP_STOPWATCH,
@@ -41,6 +43,7 @@ private:
     ScreenMenu screenMenu;
     ScreenTelemetry screenTelemetry;
     ScreenSettings screenSettings;
+    ScreenCalibration screenCalibration;
     
     // Overlays
     ScreenPopup screenPopup;
@@ -62,6 +65,7 @@ public:
         screenMenu.init();
         screenTelemetry.init();
         screenSettings.init();
+        screenCalibration.init();
         screenNotification.init();
         
         // Init Apps
@@ -165,9 +169,26 @@ public:
                     
                 case SCREEN_SETTINGS:
                     if (btnP || btnM) { screenSettings.next(); soundManager.playClick(); lastInputTime = now; }
-                    if (btnSet) { screenSettings.toggle(); soundManager.playConfirm(); lastInputTime = now; }
+                    if (btnSet) { 
+                        // Long press SET in settings to enter calibration? 
+                        // Or just toggle normal settings. 
+                        // Let's make it so if you scroll past last item it goes to Calib?
+                        // For now, let's just make it a hidden combo: MENU + UP
+                        screenSettings.toggle(); soundManager.playConfirm(); lastInputTime = now; 
+                    }
+                    if (btnMenu && btnP) { currentState = SCREEN_CALIBRATION; screenCalibration.init(); }
                     break;
                     
+                case SCREEN_CALIBRATION:
+                    screenCalibration.handleInput(btnSet);
+                    if (screenCalibration.getStage() == 3) {
+                         // Done
+                         delay(1000);
+                         currentState = SCREEN_MENU;
+                    }
+                    if (btnMenu) currentState = SCREEN_MENU; // Abort
+                    break;
+
                 case SCREEN_APP_STOPWATCH:
                     appStopwatch.handleInput(btnSet, btnMenu);
                     appStopwatch.update();
@@ -195,6 +216,7 @@ public:
             case SCREEN_MENU: screenMenu.draw(&displayManager); break;
             case SCREEN_TELEMETRY: screenTelemetry.draw(&displayManager); break;
             case SCREEN_SETTINGS: screenSettings.draw(&displayManager); break;
+            case SCREEN_CALIBRATION: screenCalibration.draw(&displayManager); break;
             case SCREEN_APP_STOPWATCH: appStopwatch.draw(&displayManager); break;
             case SCREEN_APP_TUNER: appTuner.draw(&displayManager); break;
         }

@@ -2,133 +2,158 @@
 #define INPUT_MANAGER_H
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include "HardwareConfig.h"
 
 class InputManager {
+private:
+    Preferences prefs;
+    
+    // Calibration Data
+    struct AxisCal {
+        int minVal;
+        int centerVal;
+        int maxVal;
+        int deadzone;
+    };
+    
+    AxisCal calSteer;
+    AxisCal calThrot;
+    
 public:
     // Input States
     struct State {
-        int steering; // was joyX
-        int throttle; // was joyY
+        int steering; // -100 to 100
+        int throttle; // -100 to 100
         bool joyBtn;
-        
         int potSuspension; // 0-4095
-        
-        // Trim is now a value controlled by buttons
-        int trimLevel; // Range -20 to +20
-        
+        int trimLevel; // -20 to +20
         bool btnMenu;
         bool btnSet;
         bool btnTrimPlus;
         bool btnTrimMinus;
-        
-        bool swGyro; // Toggle Switch
+        bool swGyro; 
     };
 
     State currentState;
-    State lastState; // Track previous state for edge detection
+    State lastState; 
 
-    // Internal state for logic
     int internalTrim = 0;
 
     void init() {
-        // Digital Inputs
-        if (PIN_JOY_BTN != -1) {
-            pinMode(PIN_JOY_BTN, INPUT_PULLUP);
-        }
+        // Pin Setup
+        if (PIN_JOY_BTN != -1) pinMode(PIN_JOY_BTN, INPUT_PULLUP);
         pinMode(PIN_BTN_MENU, INPUT_PULLUP);
         pinMode(PIN_BTN_SET, INPUT_PULLUP);
-        
-        // TRIM + is now 26 (Digital)
         pinMode(PIN_BTN_TRIM_PLUS, INPUT_PULLUP);
         pinMode(PIN_BTN_TRIM_MINUS, INPUT_PULLUP);
         pinMode(PIN_SW_GYRO, INPUT_PULLUP);
+        
+        // Load Calibration
+        prefs.begin("tx_cal", false);
+        
+        // Defaults if empty (ESP32 approx ADC)
+        calSteer.minVal = prefs.getInt("s_min", 0);
+        calSteer.centerVal = prefs.getInt("s_mid", 1850);
+        calSteer.maxVal = prefs.getInt("s_max", 4095);
+        calSteer.deadzone = prefs.getInt("s_dz", 150);
+        
+        calThrot.minVal = prefs.getInt("t_min", 0);
+        calThrot.centerVal = prefs.getInt("t_mid", 1850);
+        calThrot.maxVal = prefs.getInt("t_max", 4095);
+        calThrot.deadzone = prefs.getInt("t_dz", 150);
+        
+        prefs.end();
+    }
+    
+    // Runtime Calibration Setters
+    void saveCalibration(int sMin, int sMid, int sMax, int tMin, int tMid, int tMax) {
+        prefs.begin("tx_cal", false);
+        
+        calSteer.minVal = sMin;
+        calSteer.centerVal = sMid;
+        calSteer.maxVal = sMax;
+        
+        calThrot.minVal = tMin;
+        calThrot.centerVal = tMid;
+        calThrot.maxVal = tMax;
+        
+        prefs.putInt("s_min", sMin);
+        prefs.putInt("s_mid", sMid);
+        prefs.putInt("s_max", sMax);
+        prefs.putInt("t_min", tMin);
+        prefs.putInt("t_mid", tMid);
+        prefs.putInt("t_max", tMax);
+        
+        prefs.end();
     }
 
-    // Helper function for mapping joystick values
-    // Assumes 0-4095 range for raw input
-    int mapJoystick(int rawValue) {
-        // Map from 0-4095 to -100-100
-        return map(rawValue, 0, 4095, -100, 100);
+    int processAxis(int raw, AxisCal* cal) {
+        // 1. Center Deadzone
+        if (abs(raw - cal->centerVal) < cal->deadzone) {
+            return 0;
+        }
+        
+        // 2. Map halves separately for symmetry
+        int val = 0;
+        if (raw < cal->centerVal) {
+            // Lower half
+            val = map(raw, cal->minVal, cal->centerVal - cal->deadzone, -100, 0);
+        } else {
+            // Upper half
+            val = map(raw, cal->centerVal + cal->deadzone, cal->maxVal, 0, 100);
+        }
+        
+        return constrain(val, -100, 100);
     }
 
     void update() {
-        // Save last state
         lastState = currentState;
 
         #if TEST_MODE
-            // Force missing inputs to "Safe" values (Center/Zero)
-            currentState.steering = 0; // Center
-            currentState.throttle = 0; // Center
-            currentState.potSuspension = 2048; // Middle
+            currentState.steering = 0;
+            currentState.throttle = 0;
+            currentState.potSuspension = 2048;
             currentState.swGyro = false;
-            // Trim controlled by buttons below even in test mode if buttons mapped or simulated
         #else
-            // Read Joysticks (ADC)
-            // Adjust for hardware center offset
+            // Read Raw
             int rawSteer = analogRead(PIN_STEERING);
             int rawThrot = analogRead(PIN_THROTTLE);
             
-            // Map to -100 to 100
-            // We use a safe mapping that ignores the deadzone in the middle
-            int mapSteer = mapJoystick(rawSteer) + STEER_CENTER_FIX;
-            int mapThrot = mapJoystick(rawThrot) + THROT_CENTER_FIX;
-            
-            // Constrain
-            currentState.steering = constrain(mapSteer, -100, 100);
-            currentState.throttle = constrain(mapThrot, -100, 100);
+            // Process with Configured Calibration
+            currentState.steering = processAxis(rawSteer, &calSteer);
+            currentState.throttle = processAxis(rawThrot, &calThrot);
             currentState.potSuspension = analogRead(PIN_POT_SUSPENSION);
             currentState.swGyro = !digitalRead(PIN_SW_GYRO);
         #endif
 
-        // Read Digital 
-        if (PIN_JOY_BTN != -1) {
-            currentState.joyBtn = !digitalRead(PIN_JOY_BTN);
-        } else {
-            currentState.joyBtn = false;
-        }
-
+        // Buttons
+        currentState.joyBtn = (PIN_JOY_BTN != -1) ? !digitalRead(PIN_JOY_BTN) : false;
         currentState.btnMenu = !digitalRead(PIN_BTN_MENU);
         currentState.btnSet = !digitalRead(PIN_BTN_SET);
-        
-        // Read Trim Buttons 
         currentState.btnTrimPlus = !digitalRead(PIN_BTN_TRIM_PLUS);
         currentState.btnTrimMinus = !digitalRead(PIN_BTN_TRIM_MINUS);
 
-        // Trim Logic (State Machine)
-        // Increment on Rising Edge of Plus
+        // Logic
         if (currentState.btnTrimPlus && !lastState.btnTrimPlus) {
-            internalTrim++;
-            if (internalTrim > 20) internalTrim = 20;
+            if (internalTrim < 20) internalTrim++;
         }
-        // Decrement on Rising Edge of Minus
         if (currentState.btnTrimMinus && !lastState.btnTrimMinus) {
-            internalTrim--;
-            if (internalTrim < -20) internalTrim = -20;
+            if (internalTrim > -20) internalTrim--;
         }
-        
         currentState.trimLevel = internalTrim;
     }
-
-    // Edge Detection Helpers
-    bool isMenuPressed() { return currentState.btnMenu && !lastState.btnMenu; }
-    bool isSetPressed() { return currentState.btnSet && !lastState.btnSet; }
     
-    void resetTrim() {
-        internalTrim = 0;
-    }
+    // Helpers
+    int getThrottleNormalized() { return currentState.throttle; }
+    int getSteeringNormalized() { return currentState.steering; }
+    void resetTrim() { internalTrim = 0; }
     
-    // Helper to get normalized values (-100 to 100)
-    int getSteeringNormalized() {
-        return currentState.steering; // Already mapped in update()
-    }
-    
-    int getThrottleNormalized() {
-        return currentState.throttle; // Already mapped in update()
-    }
+    // For Calibration Screen
+    int getRawSteer() { return analogRead(PIN_STEERING); }
+    int getRawThrot() { return analogRead(PIN_THROTTLE); }
 };
 
-// Global Instance
 InputManager inputManager;
 
 #endif // INPUT_MANAGER_H
