@@ -6,7 +6,7 @@
 #include "HardwareConfig.h"
 #include "Theme.h"
 
-// Cyber-Noir Menu System
+// Clean Functional Menu
 #define MENU_ITEMS 4
 
 class ScreenMenu {
@@ -20,13 +20,12 @@ public:
          selected = 0;
     }
 
-    void update() {
-        // Controlled by UIManager
-    }
+    void update() {}
     
     void next() {
         selected++;
         if (selected >= MENU_ITEMS) selected = 0;
+        // Animation trigger could go here
     }
     
     void prev() {
@@ -39,38 +38,35 @@ public:
     void draw(DisplayManager* display) {
         TFT_eSprite* sprite = display->getSprite();
         
-        sprite->fillSprite(COLOR_BG_MAIN); // Deep Black
+        // 1. Full Blue Background
+        sprite->fillSprite(COLOR_BG_MAIN);
         
-        // Cyber Header
-        sprite->fillRect(0, 0, SCREEN_WIDTH, 22, COLOR_BG_PANEL);
-        sprite->drawFastHLine(0, 22, SCREEN_WIDTH, COLOR_ACCENT_4); // Hot Pink Line
+        // 2. Header
+        sprite->fillRect(0, 0, SCREEN_WIDTH, 20, COLOR_BG_PANEL);
+        sprite->drawFastHLine(0, 20, SCREEN_WIDTH, COLOR_TEXT_MAIN); // White line separator
         
-        sprite->setTextColor(COLOR_ACCENT_3, COLOR_BG_PANEL);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
         sprite->setTextDatum(MC_DATUM);
-        sprite->drawString("SYSTEM MENU", SCREEN_WIDTH/2, 11, FONT_LABEL);
+        sprite->drawString("OPTIONS", SCREEN_WIDTH/2, 11, FONT_LABEL);
 
-        // List
-        int startY = 32;
-        int h = 28;
+        // 3. Items Loop
+        int startY = 35;
+        int h = 26;
 
         for(int i=0; i<itemCount; i++) {
             int y = startY + (i * h);
             
             if (i == selected) {
-                // Active Item: Glowing Box
-                sprite->fillRect(5, y, SCREEN_WIDTH-10, h-4, COLOR_BG_PANEL);
-                sprite->drawRect(5, y, SCREEN_WIDTH-10, h-4, COLOR_ACCENT_4);
+                // FIXED: Active Item = Solid White Box with Blue Text
+                // "No Black Box"
+                sprite->fillRoundRect(10, y, SCREEN_WIDTH-20, h-4, 4, COLOR_TEXT_MAIN);
                 
-                // Tech decor
-                sprite->fillRect(5, y, 4, h-4, COLOR_ACCENT_4);
-                
-                // Glow text
-                sprite->setTextColor(COLOR_ACCENT_4, COLOR_BG_PANEL);
+                sprite->setTextColor(COLOR_BG_MAIN, COLOR_TEXT_MAIN); // Inverted text
                 sprite->setTextDatum(MC_DATUM);
                 sprite->drawString(items[i], SCREEN_WIDTH/2, y + (h/2) - 2, FONT_LABEL);
             } else {
-                // Inactive
-                sprite->drawRect(5, y, SCREEN_WIDTH-10, h-4, COLOR_BG_SHADOW);
+                // Inactive = Transparent/Blue with White Text
+                sprite->drawRoundRect(10, y, SCREEN_WIDTH-20, h-4, 4, COLOR_TEXT_MUTED); // Subtle border
                 
                 sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_MAIN);
                 sprite->setTextDatum(MC_DATUM);
@@ -78,10 +74,11 @@ public:
             }
         }
         
-        // Footer (Keys)
-        sprite->setTextColor(COLOR_TEXT_MUTED, COLOR_BG_MAIN);
-        sprite->setTextDatum(BC_DATUM);
-        sprite->drawString("[SET] SELECT   [MENU] EXIT", SCREEN_WIDTH/2, SCREEN_HEIGHT-4, FONT_MICRO);
+        // 4. Footer
+        sprite->drawFastHLine(0, SCREEN_HEIGHT-18, SCREEN_WIDTH, COLOR_TEXT_MUTED);
+        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_MAIN);
+        sprite->setTextDatum(MC_DATUM);
+        sprite->drawString("[SET] SELECT    [MENU] EXIT", SCREEN_WIDTH/2, SCREEN_HEIGHT-8, FONT_MICRO);
     }
 };
 

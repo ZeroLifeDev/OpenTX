@@ -4,26 +4,25 @@
 #include <TFT_eSPI.h>
 
 // ==========================================
-//          CYBER-NOIR THEME (DARK)
+//          TECH BLUE THEME
 // ==========================================
-// "Complexly Overengineered" Dark Palette
-// Deep Black, Neon Accents, High Tech
+// User Request: "More Blue", "Not Dark", "Clean"
 
 // Colors (R5 G6 B5 - 16 bit)
 
-#define COLOR_BG_MAIN     0x0000 // Deepest Black
-#define COLOR_BG_PANEL    0x10A2 // Dark Charcoal / Gunmetal
-#define COLOR_BG_SHADOW   0x0841 // Very Dark Grey
+#define COLOR_BG_MAIN     0x0010 // Deep Navy Blue (Not Black)
+#define COLOR_BG_PANEL    0x001F // Royal Blue (Panels)
+#define COLOR_BG_SHADOW   0x0008 // Darker Navy
 
 #define COLOR_TEXT_MAIN   0xFFFF // White
-#define COLOR_TEXT_SUB    0x9CC7 // Cyan-Grey
-#define COLOR_TEXT_MUTED  0x632C // Dark Grey
+#define COLOR_TEXT_SUB    0x9EFE // Cyan-White
+#define COLOR_TEXT_MUTED  0x4A69 // Muted Blue
 
-// Neon Accents
-#define COLOR_ACCENT_1    0xF800 // Cyber Red (Critical)
-#define COLOR_ACCENT_2    0x07E0 // Matrix Green (Data)
-#define COLOR_ACCENT_3    0x04FF // Neon Cyan (Active)
-#define COLOR_ACCENT_4    0xF81F // Hot Pink (Decor)
+// Accents
+#define COLOR_ACCENT_1    0xF800 // Red (Alarm)
+#define COLOR_ACCENT_2    0x07FF // Cyan (Primary Accent)
+#define COLOR_ACCENT_3    0xFFE0 // Yellow (Warning)
+#define COLOR_ACCENT_4    0x04FF // Electric Blue (Decor)
 
 // Status
 #define COLOR_SUCCESS     0x07E0 // Green
@@ -53,8 +52,8 @@
 //          BACKWARD COMPATIBILITY
 // ==========================================
 #define COLOR_BG_DARK    COLOR_BG_MAIN
-#define COLOR_ACCENT     COLOR_ACCENT_3
-#define COLOR_HIGHLIGHT  COLOR_ACCENT_2
+#define COLOR_ACCENT     COLOR_ACCENT_2
+#define COLOR_HIGHLIGHT  COLOR_ACCENT_4
 
 #define FONT_SMALL       FONT_LABEL
 #define FONT_BODY        FONT_LABEL

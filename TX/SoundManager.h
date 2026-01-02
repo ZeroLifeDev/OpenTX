@@ -8,19 +8,18 @@
 #define BUZZER_CHANNEL 0
 #define BUZZER_RES 8
 
-
-// Note Frequencies
-#define NOTE_C5 523
-#define NOTE_D5 587
-#define NOTE_E5 659
-#define NOTE_F5 698
-#define NOTE_G5 784
-#define NOTE_A5 880
-#define NOTE_B5 988
-#define NOTE_C6 1047
-#define NOTE_E6 1319
-#define NOTE_G6 1568
-#define NOTE_C7 2093
+// Note Frequencies (Increased by ~50% for cleaner tone)
+#define NOTE_C5 784  // Was C5 (523)
+#define NOTE_D5 880
+#define NOTE_E5 988
+#define NOTE_F5 1046
+#define NOTE_G5 1175
+#define NOTE_A5 1318
+#define NOTE_B5 1480
+#define NOTE_C6 1568
+#define NOTE_E6 1979
+#define NOTE_G6 2352
+#define NOTE_C7 3136
 
 class SoundManager {
 private:
@@ -44,53 +43,48 @@ public:
         ledcWrite(PIN_BUZZER, 0);
     }
 
-    // Play a gentle rising arpeggio (Connected)
+    // Gentle Chirp
     void playConnected() {
         if (!enabled) return;
-        int notes[] = {NOTE_C5, NOTE_E5, NOTE_G5, NOTE_C6, NOTE_E6};
-        for (int i=0; i<5; i++) {
-            playTone(notes[i], 80, 100);
-            delay(10);
-        }
+        playTone(NOTE_C6, 60, 100);
+        delay(30);
+        playTone(NOTE_E6, 60, 100);
     }
 
-    // Critical Alarm / Disconnect sound
-    // Sharp, alarming siren pattern
+    // Critical Alarm (Higher pitch)
     void playDisconnected() {
         if (!enabled) return;
-        // Siren: High Low High Low
-        for(int k=0; k<3; k++) {
-            playTone(1500, 150, 200);
-            playTone(1000, 150, 200);
+        for(int k=0; k<2; k++) {
+            playTone(2500, 100, 200);
+            delay(50);
+            playTone(2000, 100, 200);
         }
     }
 
-    // System Boot Sweep
+    // Fast Sweep
     void beepStartup() {
         if (!enabled) return;
-        // rapid rise
-        for (int i=500; i<2500; i+=100) {
+        for (int i=1000; i<3000; i+=200) {
             ledcAttach(PIN_BUZZER, i, BUZZER_RES);
             ledcWrite(PIN_BUZZER, 100);
-            delay(5);
+            delay(3);
         }
         ledcWrite(PIN_BUZZER, 0);
-        delay(100);
-        // Final "Ping"
-        playTone(NOTE_C7, 300, 150);
+        delay(50);
+        playTone(NOTE_C7, 150, 150);
     }
     
-    // UI Sounds
-    void playClick() { playTone(2000, 15, 80); } // Short, crisp
-    void playConfirm() { playTone(1200, 50, 100); delay(50); playTone(1800, 80, 100); }
-    void playBack() { playTone(1800, 50, 100); delay(50); playTone(1200, 80, 100); }
+    // UI Sounds - Short & Crisp
+    void playClick() { playTone(2500, 10, 80); } 
+    void playConfirm() { playTone(1500, 40, 100); delay(30); playTone(2200, 60, 100); }
+    void playBack() { playTone(2200, 40, 100); delay(30); playTone(1500, 60, 100); }
     
     // Gyro
     void playGyroOn() {
-        playTone(NOTE_C5, 50); playTone(NOTE_E5, 50); playTone(NOTE_G5, 100);
+        playTone(NOTE_E6, 40); delay(20); playTone(NOTE_G6, 80);
     }
     void playGyroOff() {
-        playTone(NOTE_G5, 50); playTone(NOTE_E5, 50); playTone(NOTE_C5, 100);
+        playTone(NOTE_G6, 40); delay(20); playTone(NOTE_E6, 80);
     }
 };
 
@@ -98,4 +92,3 @@ public:
 SoundManager soundManager;
 
 #endif // SOUND_MANAGER_H
-

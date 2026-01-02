@@ -9,25 +9,20 @@
 
 // Complex Dashboard State
 struct DashboardState {
-    // Physics-based values
     AnimFloat throttleVal;
     AnimFloat steerVal;
     
-    // Animation States
-    AnimFloat gyroAnim; // 0.0 to 100.0 (Expansion)
-    AnimFloat gyroRot;  // Rotation for "Target"
+    // Gyro Stability Animation
+    AnimFloat gyroStab; // 0-100 expansion of the "Shield"
     bool lastGyroState;
     
     ScanLine bgScan;
-    MicroJitter jitter; 
     
     DashboardState() : 
         throttleVal(0, 0.15f, 0.85f), 
         steerVal(0, 0.2f, 0.7f), 
-        gyroAnim(0, 0.1f, 0.85f),
-        gyroRot(0, 0.05f, 0.95f),
-        bgScan(0, SCREEN_HEIGHT, 1.0f),
-        jitter(2),
+        gyroStab(0, 0.1f, 0.85f),
+        bgScan(0, SCREEN_HEIGHT, 0.8f),
         lastGyroState(false)
     {}
 };
@@ -40,147 +35,125 @@ public:
     void draw(DisplayManager* display) {
         TFT_eSprite* sprite = display->getSprite();
         
-        // --- 1. Update Physics ---
+        // 1. Physics Update
         state.throttleVal.target = inputManager.getThrottleNormalized();
         state.throttleVal.update();
-        
         state.steerVal.target = inputManager.getSteeringNormalized();
         state.steerVal.update();
-        
         state.bgScan.update();
         
-        // Gyro Logic
         bool currentGyro = inputManager.currentState.swGyro;
         if (currentGyro != state.lastGyroState) {
             if (currentGyro) {
-                state.gyroAnim.snap(0); 
-                state.gyroAnim.target = 100.0f; 
-                state.gyroRot.velocity = 20.0f; // Spin up
+                state.gyroStab.target = 100.0f; // Enable Shield
+                soundManager.playGyroOn();
             } else {
-                state.gyroAnim.target = 0.0f; 
+                state.gyroStab.target = 0.0f; 
+                soundManager.playGyroOff();
             }
             state.lastGyroState = currentGyro;
         }
-        state.gyroAnim.update();
-        if (currentGyro) state.gyroRot.target += 2.0f; // Constant rotation
-        state.gyroRot.update();
+        state.gyroStab.update();
 
-        // --- 2. Background Rendering (Cyber-Noir) ---
-        sprite->fillSprite(COLOR_BG_MAIN); // Deep Black
+        // 2. Background (Tech Blue)
+        sprite->fillSprite(COLOR_BG_MAIN);
         
-        // Subtle Grid (Darker)
-        for (int x=0; x<SCREEN_WIDTH; x+=CELL_W) sprite->drawFastVLine(x, 0, SCREEN_HEIGHT, COLOR_BG_SHADOW);
-        for (int y=0; y<SCREEN_HEIGHT; y+=CELL_H) sprite->drawFastHLine(0, y, SCREEN_WIDTH, COLOR_BG_SHADOW);
-        
-        // Vignette / Scanline
-        int scanY = state.bgScan.y();
-        if (scanY < SCREEN_HEIGHT) sprite->drawFastHLine(0, scanY, SCREEN_WIDTH, COLOR_BG_PANEL);
-        
-        // --- 3. Main Tachometer (Center) ---
+        // Digital Grid
+        for (int y=0; y<SCREEN_HEIGHT; y+=20) {
+             sprite->drawFastHLine(0, y, SCREEN_WIDTH, COLOR_BG_SHADOW);
+        }
+        // Scanline
+        sprite->drawFastHLine(0, state.bgScan.y(), SCREEN_WIDTH, COLOR_BG_PANEL);
+
+        // 3. Center Tach (Clean Tech)
         int cx = SCREEN_WIDTH / 2;
-        int cy = 75;
+        int cy = 70;
         int r = 50;
-        
-        // Outer Tech Ring
-        sprite->drawCircle(cx, cy, r, COLOR_BG_PANEL);
         
         int tVal = (int)state.throttleVal.val();
         
-        // RPM Arcs
-        int startAngle = 135;
-        int sweep = map(abs(tVal), 0, 100, 0, 270);
+        // Circular Track
+        sprite->drawCircle(cx, cy, r, COLOR_BG_PANEL);
+        sprite->drawCircle(cx, cy, r-5, COLOR_BG_PANEL);
         
-        // Dynamic Color based on speed
-        uint16_t arcColor = COLOR_ACCENT_3; // Cyan
-        if (abs(tVal) > 50) arcColor = COLOR_WARNING;
-        if (abs(tVal) > 85) arcColor = COLOR_DANGER;
+        // Arc
+        int angle = map(abs(tVal), 0, 100, 0, 260);
+        int start = 140; // Bottom left
         
-        // Draw Arc
-        for (int i=0; i<sweep; i+=3) {
-             float rad = (startAngle + i) * DEG_TO_RAD;
-             int rx = cx + cos(rad) * (r-2);
-             int ry = cy + sin(rad) * (r-2);
-             sprite->drawPixel(rx, ry, arcColor);
-             // Thick
-             rx = cx + cos(rad) * (r-3);
-             ry = cy + sin(rad) * (r-3);
-             sprite->drawPixel(rx, ry, arcColor);
+        uint16_t gaugeCol = COLOR_ACCENT_2; // Cyan
+        if (abs(tVal)>80) gaugeCol = COLOR_ACCENT_1; // Red
+        
+        // Draw multiple arcs for "Tech" look
+        for (int i=0; i<angle; i+=4) {
+             float rad = (start + i) * DEG_TO_RAD;
+             int x = cx + cos(rad) * (r-2);
+             int y = cy + sin(rad) * (r-2);
+             sprite->drawPixel(x, y, gaugeCol);
+             
+             // Inner ticks
+             if (i%20 == 0) {
+                 int x2 = cx + cos(rad) * (r-8);
+                 int y2 = cy + sin(rad) * (r-8);
+                 sprite->drawLine(x, y, x2, y2, gaugeCol);
+             }
         }
         
-        // Center Speedo (Rolling Counter)
-        int dispSpeed = map(abs(tVal), 0, 100, 0, 999);
+        // Digital Speed
+        int kph = map(abs(tVal), 0, 100, 0, 80);
         sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
         sprite->setTextDatum(MC_DATUM);
-        sprite->drawNumber(dispSpeed, cx, cy - 5, FONT_DIGIT);
+        sprite->drawNumber(kph, cx, cy-5, FONT_DIGIT);
         
         sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_MAIN);
-        sprite->drawString("KPH", cx, cy + 20, FONT_MICRO);
+        sprite->drawString("KM/H", cx, cy+20, FONT_MICRO);
 
-        // --- 4. Steering (Bottom) ---
-        int steerY = 135;
+        // 4. Steering (Bottom)
         int sVal = (int)state.steerVal.val();
-        int bW = (SCREEN_WIDTH - 30) / 2;
+        int sy = 135;
+        // Center mark
+        sprite->drawFastVLine(cx, sy-5, 10, COLOR_TEXT_MUTED);
         
-        sprite->drawFastHLine(15, steerY, SCREEN_WIDTH-30, COLOR_BG_PANEL);
-        sprite->drawFastVLine(cx, steerY-3, 6, COLOR_TEXT_MUTED); // Center mark
-        
-        if (sVal != 0) {
-            int len = map(abs(sVal), 0, 100, 0, bW);
-            if (sVal > 0) sprite->fillRect(cx, steerY-1, len, 3, COLOR_ACCENT_3);
-            else sprite->fillRect(cx-len, steerY-1, len, 3, COLOR_ACCENT_3);
-        }
+        // Bar
+        int barLen = map(abs(sVal), 0, 100, 0, 50);
+        if (sVal > 0) sprite->fillRect(cx, sy, barLen, 4, COLOR_ACCENT_2);
+        else sprite->fillRect(cx-barLen, sy, barLen, 4, COLOR_ACCENT_2);
 
-        // --- 5. Suspension Gauge (New Feature) ---
-        // Vertical Bar on Right
-        int suspVal = inputManager.currentState.potSuspension; // 0-4095
-        int sH = map(suspVal, 0, 4095, 0, 60);
-        int barX = SCREEN_WIDTH - 8;
-        int barY = 40;
-        int barMax = 60;
-        
-        // Container
-        sprite->drawRect(barX, barY, 4, barMax, COLOR_BG_PANEL);
-        // Fill
-        sprite->fillRect(barX+1, barY + (barMax - sH), 2, sH, COLOR_ACCENT_2); // Green fill
-        
-        // Label
-        sprite->setTextDatum(TC_DATUM);
-        sprite->drawString("S", barX+2, barY - 10, FONT_MICRO);
+        // 5. Suspension Bar (Right Side)
+        int sus = inputManager.currentState.potSuspension;
+        int susH = map(sus, 0, 4095, 0, 60);
+        sprite->drawRect(SCREEN_WIDTH-10, 40, 6, 60, COLOR_BG_PANEL);
+        sprite->fillRect(SCREEN_WIDTH-9, 100-susH, 4, susH, COLOR_ACCENT_4); // Electric Blue
+        sprite->drawString("S", SCREEN_WIDTH-7, 30, FONT_MICRO);
 
-
-        // --- 6. GYRO TARGET SYSTEM (The "Target" Request) ---
-        float gAnim = state.gyroAnim.val();
-        
-        if (gAnim > 1.0f) {
-            // "Sniper" Scope Effect
-            int size = map((long)gAnim, 0, 100, 0, 60);
-            float rotation = state.gyroRot.val();
+        // 6. GYRO STABILITY DISPLAY
+        // "Protective Shield" / Brackets
+        float g = state.gyroStab.val(); // 0-100
+        if (g > 1.0f) {
+            int gap = map((long)g, 0, 100, 60, 30); // Clamps IN
+            int w = 10;
+            int h = 40;
+            // Left Bracket
+            sprite->drawFastVLine(cx - gap, cy - h/2, h, COLOR_SUCCESS);
+            sprite->drawFastHLine(cx - gap, cy - h/2, w, COLOR_SUCCESS); // Top cap
+            sprite->drawFastHLine(cx - gap, cy + h/2, w, COLOR_SUCCESS); // Bot cap
             
-            // 4 Corner Brackets expanding in
-            // Use polar coordinates for rotation
-            for (int i=0; i<4; i++) {
-                float ang = (rotation + (i * 90)) * DEG_TO_RAD;
-                int x = cx + cos(ang) * size;
-                int y = cy + sin(ang) * size;
-                sprite->drawCircle(x, y, 2, COLOR_ACCENT_1);
-            }
+            // Right Bracket
+            sprite->drawFastVLine(cx + gap, cy - h/2, h, COLOR_SUCCESS);
+            sprite->drawFastHLine(cx + gap - w, cy - h/2, w + 1, COLOR_SUCCESS);
+            sprite->drawFastHLine(cx + gap - w, cy + h/2, w + 1, COLOR_SUCCESS);
             
-            // Inner Reticle
-            if (gAnim > 80) {
-                 sprite->drawCircle(cx, cy, 15, COLOR_ACCENT_1);
-                 sprite->drawLine(cx-20, cy, cx+20, cy, COLOR_ACCENT_1);
-                 sprite->drawLine(cx, cy-20, cx, cy+20, COLOR_ACCENT_1);
-                 
-                 sprite->setTextColor(COLOR_ACCENT_1, COLOR_BG_MAIN);
-                 sprite->drawString("TARGET LOCKED", cx, cy - 40, FONT_MICRO);
+            if (g > 90) {
+                sprite->setTextColor(COLOR_SUCCESS, COLOR_BG_MAIN);
+                sprite->drawString("STABILITY ON", cx, cy + 30, FONT_MICRO);
             }
         }
-
-        // --- 7. Status Header ---
+        
+        // 7. Connectivity Status
         bool linked = commsManager.isConnected();
-        sprite->setTextColor(linked ? COLOR_ACCENT_2 : COLOR_ACCENT_1, COLOR_BG_MAIN);
-        sprite->setTextDatum(TL_DATUM);
-        sprite->drawString(linked ? "[LINK]" : "[VOID]", 4, 4, FONT_MICRO);
+        sprite->fillCircle(10, 10, 4, linked ? COLOR_SUCCESS : COLOR_DANGER);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
+        sprite->setTextDatum(ML_DATUM);
+        sprite->drawString(linked ? "TX-LINK" : "SEARCH", 20, 10, FONT_LABEL);
     }
 };
 
