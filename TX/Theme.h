@@ -4,31 +4,30 @@
 #include <TFT_eSPI.h>
 
 // ==========================================
-//              HYPER-GLASS THEME
+//          CYBER-NOIR THEME (DARK)
 // ==========================================
-// "Complexly Overengineered" Palette
-// Light, Glossy, High-Tech, NOT DARK.
+// "Complexly Overengineered" Dark Palette
+// Deep Black, Neon Accents, High Tech
 
 // Colors (R5 G6 B5 - 16 bit)
-// https://rgbcolorpicker.com/565
 
-#define COLOR_BG_MAIN     0xE79F // Light Cool Grey (Base)
-#define COLOR_BG_PANEL    0xFFFF // Pure White (Panels)
-#define COLOR_BG_SHADOW   0xBDF7 // Shadow Grey
+#define COLOR_BG_MAIN     0x0000 // Deepest Black
+#define COLOR_BG_PANEL    0x10A2 // Dark Charcoal / Gunmetal
+#define COLOR_BG_SHADOW   0x0841 // Very Dark Grey
 
-#define COLOR_TEXT_MAIN   0x0000 // Black (Sharp)
-#define COLOR_TEXT_SUB    0x52AA // Dark Grey
-#define COLOR_TEXT_MUTED  0x9CD3 // Light Grey (Details)
+#define COLOR_TEXT_MAIN   0xFFFF // White
+#define COLOR_TEXT_SUB    0x9CC7 // Cyan-Grey
+#define COLOR_TEXT_MUTED  0x632C // Dark Grey
 
-// Intense Accents
-#define COLOR_ACCENT_1    0xF800 // Deep Red (Power/Critical)
-#define COLOR_ACCENT_2    0x04BF // Electric Cyan (Data/Link)
-#define COLOR_ACCENT_3    0xFD20 // Solar Orange (Active/Warning)
-#define COLOR_ACCENT_4    0x901F // Tech Purple (Decor)
+// Neon Accents
+#define COLOR_ACCENT_1    0xF800 // Cyber Red (Critical)
+#define COLOR_ACCENT_2    0x07E0 // Matrix Green (Data)
+#define COLOR_ACCENT_3    0x04FF // Neon Cyan (Active)
+#define COLOR_ACCENT_4    0xF81F // Hot Pink (Decor)
 
 // Status
-#define COLOR_SUCCESS     0x05E0 // Emerald Green
-#define COLOR_WARNING     0xFDE0 // Bright Yellow
+#define COLOR_SUCCESS     0x07E0 // Green
+#define COLOR_WARNING     0xFFE0 // Yellow
 #define COLOR_DANGER      0xF800 // Red
 
 // Fonts
@@ -54,7 +53,7 @@
 //          BACKWARD COMPATIBILITY
 // ==========================================
 #define COLOR_BG_DARK    COLOR_BG_MAIN
-#define COLOR_ACCENT     COLOR_ACCENT_1
+#define COLOR_ACCENT     COLOR_ACCENT_3
 #define COLOR_HIGHLIGHT  COLOR_ACCENT_2
 
 #define FONT_SMALL       FONT_LABEL
