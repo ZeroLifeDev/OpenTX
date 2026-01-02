@@ -32,6 +32,9 @@ struct AnimFloat {
         velocity = 0;
     }
     
+    // Alias for snap
+    void reset(float t) { snap(t); }
+    
     void update() {
         float force = (target - current) * k;
         velocity += force;
