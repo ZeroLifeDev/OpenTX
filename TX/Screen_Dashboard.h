@@ -9,26 +9,12 @@ class ScreenDashboard {
 private:
     float animPhase = 0; // For pulsing effects
 
-    // Helper to draw a partial arc/ring
-    void drawArc(TFT_eSprite* sprite, int x, int y, int r, int startAngle, int endAngle, int color, int thickness) {
-        // Fallback: Segmented Gauge
-        int segments = 20;
-        float angleStep = (endAngle - startAngle) / (float)segments;
-        
-        for (int i = 0; i < segments; i++) {
-            float angle = startAngle + (i * angleStep);
-            float rad = angle * DEG_TO_RAD;
-            
-            int x1 = x + cos(rad) * (r - thickness);
-            int y1 = y + sin(rad) * (r - thickness);
-            int x2 = x + cos(rad) * r;
-            int y2 = y + sin(rad) * r;
-            
-            sprite->drawLine(x1, y1, x2, y2, color);
-        }
+    // Helper to draw a partial arc/ring (simulated with dots/lines)
+    void drawArc(DisplayManager* display, int x, int y, int r, int startAngle, int endAngle, uint16_t color) {
+         display->drawArcSegment(x, y, r, startAngle, endAngle, color);
     }
 
-    void drawHorizontalBar(TFT_eSprite* sprite, int x, int y, int w, int h, int val, int minVal, int maxVal, const char* label, uint16_t color) {
+    void drawHorizontalBar(GFXcanvas16* sprite, int x, int y, int w, int h, int val, int minVal, int maxVal, const char* label, uint16_t color) {
         // Background
         sprite->drawRect(x, y, w, h, COLOR_BG_PANEL);
         
@@ -39,13 +25,14 @@ private:
         sprite->fillRect(x + 1, y + 1, valPx, h - 2, color);
         
         // Label
-        sprite->setTextDatum(ML_DATUM);
-        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_DARK);
-        sprite->drawString(label, x, y - 8, FONT_SMALL);
+        sprite->setTextColor(COLOR_TEXT_SUB);
+        sprite->setTextSize(1);
+        sprite->setCursor(x, y-8);
+        sprite->print(label);
     }
     
     // New fancy bar for center steering
-    void drawCenterBar(TFT_eSprite* sprite, int x, int y, int w, int h, int val, int minVal, int maxVal, const char* label) {
+    void drawCenterBar(GFXcanvas16* sprite, int x, int y, int w, int h, int val, int minVal, int maxVal, const char* label) {
          // Center Line
         int center = x + w/2;
         sprite->drawFastVLine(center, y-2, h+4, COLOR_TEXT_SUB); // Marker
@@ -66,14 +53,13 @@ private:
         }
         
         // Label
-        sprite->setTextDatum(TC_DATUM);
-        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_DARK);
-        sprite->drawString(label, center, y + h + 2, FONT_SMALL);
+        sprite->setTextColor(COLOR_TEXT_SUB);
+        displayManager.setTextCentered(label, center, y + h + 2, 1);
     }
 
 public:
     void draw(DisplayManager* display) {
-        TFT_eSprite* sprite = display->getSprite();
+        GFXcanvas16* sprite = display->getCanvas();
         
         // Update Animation Phase
         animPhase += 0.1;
@@ -83,19 +69,18 @@ public:
         sprite->fillRect(0, 0, SCREEN_WIDTH, 18, COLOR_BG_PANEL);
         sprite->drawRect(0, 0, SCREEN_WIDTH, 18, COLOR_BG_PANEL); // Outline
         
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
-        sprite->setTextDatum(ML_DATUM);
-        sprite->drawString("OpenTX", 4, 9, FONT_SMALL);
+        sprite->setTextColor(COLOR_TEXT_MAIN);
+        display->setTextLeft("OpenTX", 4, 6, 1);
         
         // Gyro Indicator in header
         int gyroX = SCREEN_WIDTH / 2;
         bool gyroOn = inputManager.currentState.swGyro;
         if (gyroOn) {
-             sprite->setTextColor(COLOR_BG_DARK, COLOR_ACCENT);
-             sprite->drawString("GYRO", gyroX, 9, FONT_SMALL);
+             sprite->setTextColor(COLOR_ACCENT);
+             display->setTextCentered("GYRO", gyroX, 6, 1);
         } else {
-             sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_PANEL);
-             sprite->drawString("GYRO", gyroX, 9, FONT_SMALL);
+             sprite->setTextColor(COLOR_TEXT_SUB);
+             display->setTextCentered("GYRO", gyroX, 6, 1);
         }
 
         // Battery Icon (Animated Pulse if low)
@@ -113,7 +98,7 @@ public:
         
         int centerX = SCREEN_WIDTH / 2;
         int centerY = 70;
-        int radius = 48;
+        int radius = 45; // reduced slightly
         
         // Rotating Outer Ring Animation
         int rotOffset = (int)(animPhase * 5); // slow rotation
@@ -132,15 +117,10 @@ public:
         sprite->drawCircle(centerX, centerY, radius, COLOR_BG_PANEL);
         
         // Active Throttle Arc
-        // Map throttle -100 to 100 to angle 135 to 405
-        // Actually, let's visual split: Forward (Right/CW) and Reverse (Left/CCW)
-        // Top is 0 speed.
-        
-        int segments = 40;
+        int segments = 20; // Reduced for GFX speed
         float angleStep = 270.0 / segments;
         int startAngle = 135; // Bottom Left-ish
         
-        // Just fill based on speed intensity for now to look cool
         int activeSegs = map(abs(throttle), 0, 100, 0, segments);
         
         for (int i = 0; i < segments; i++) {
@@ -155,24 +135,22 @@ public:
              if (abs(throttle) > 90 && (millis() / 100) % 2 == 0) segColor = COLOR_TEXT_MAIN;
 
              if (i < activeSegs) {
-                 // Draw thick wedge line
+                 // Draw thick wedge line using simpler geometry
                  int x1 = centerX + cos(rad) * (radius - 8);
                  int y1 = centerY + sin(rad) * (radius - 8);
                  int x2 = centerX + cos(rad) * radius;
                  int y2 = centerY + sin(rad) * radius;
                  sprite->drawLine(x1, y1, x2, y2, segColor);
-                 // Double thickness
                  sprite->drawLine(x1+1, y1, x2+1, y2, segColor);
              }
         }
         
         // Inner Speed Value
-        sprite->setTextDatum(MC_DATUM);
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_DARK);
-        sprite->drawString(String(speed), centerX, centerY - 5, 6); // Large Font
+        sprite->setTextColor(COLOR_TEXT_MAIN);
+        display->setTextCentered(String(speed), centerX, centerY - 8, 3); // Large Font
         
-        sprite->setTextColor(COLOR_TEXT_SUB, COLOR_BG_DARK);
-        sprite->drawString(throttle >= 0 ? "FWD" : "REV", centerX, centerY + 20, FONT_SMALL);
+        sprite->setTextColor(COLOR_TEXT_SUB);
+        display->setTextCentered(throttle >= 0 ? "FWD" : "REV", centerX, centerY + 20, 1);
 
         // 3. Steering Bar (Bottom)
         int steering = inputManager.getSteeringNormalized(); // Renamed from joyX
@@ -180,25 +158,23 @@ public:
 
         // 4. Suspension & Trim (Bottom Corners)
         
-        // Suspension (Left) - Vertical Bar maybe? Or just number with icon
+        // Suspension (Left) 
         int susp = map(inputManager.currentState.potSuspension, 0, 4095, 0, 100);
         sprite->drawRect(5, 40, 10, 80, COLOR_BG_PANEL); // Vertical Bar container
         int fillH = map(susp, 0, 100, 0, 78);
         sprite->fillRect(6, 40 + 80 - fillH - 1, 8, fillH, COLOR_HIGHLIGHT);
-        sprite->setTextDatum(TC_DATUM);
-        sprite->drawString("SUS", 10, 30, FONT_SMALL);
+        display->setTextLeft("SUS", 5, 30, 1);
 
         // Trim (Right) - Digital Value
         int trim = inputManager.currentState.trimLevel; // -20 to 20
-        sprite->setTextDatum(MC_DATUM);
-        sprite->setTextColor(COLOR_HIGHLIGHT, COLOR_BG_DARK);
+        sprite->setTextColor(COLOR_HIGHLIGHT);
         
         // Draw a "Container" for trim
         sprite->drawRect(SCREEN_WIDTH - 35, 40, 30, 30, COLOR_BG_PANEL);
-        sprite->drawString("TRIM", SCREEN_WIDTH - 20, 30, FONT_SMALL);
+        display->setTextLeft("TRIM", SCREEN_WIDTH - 30, 30, 1);
         
         String trimStr = (trim > 0 ? "+" : "") + String(trim);
-        sprite->drawString(trimStr, SCREEN_WIDTH - 20, 55, FONT_BODY);
+        display->setTextCentered(trimStr, SCREEN_WIDTH - 20, 50, 2);
         
         // 5. Tech Decor
         // Corner brackets / decoration

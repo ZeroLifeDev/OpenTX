@@ -34,7 +34,7 @@ public:
     void draw(DisplayManager* display) {
         if (!isActive) return;
         
-        TFT_eSprite* sprite = display->getSprite();
+        GFXcanvas16* sprite = display->getCanvas();
         
         // Compute overlay rect (centered)
         int w = SCREEN_WIDTH - 20;
@@ -47,12 +47,11 @@ public:
         sprite->drawRoundRect(x, y, w, h, 6, color);
         
         // Text
-        sprite->setTextDatum(MC_DATUM);
-        sprite->setTextColor(color, COLOR_BG_PANEL);
-        sprite->drawString(message, SCREEN_WIDTH/2, y + 20, FONT_BODY);
+        sprite->setTextColor(color);
+        display->setTextCentered(message, SCREEN_WIDTH/2, y + 20, 1);
         
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
-        sprite->drawString(subMessage, SCREEN_WIDTH/2, y + 40, FONT_SMALL);
+        sprite->setTextColor(COLOR_TEXT_MAIN);
+        display->setTextCentered(subMessage, SCREEN_WIDTH/2, y + 40, 1);
         
         // Progress bar for timeout?
         int timeParams = millis() - startTime;

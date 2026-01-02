@@ -26,7 +26,14 @@
 #define PIN_SW_GYRO 27 
 
 // Outputs
-#define PIN_BUZZER 18 // Moved from 25 (TFT)
+#define PIN_BUZZER 18 
+
+// TFT Display (ST7735)
+#define PIN_TFT_MOSI 13
+#define PIN_TFT_SCLK 14
+#define PIN_TFT_CS    5
+#define PIN_TFT_DC   25
+#define PIN_TFT_RST   4
 
 // --- System ---
 #define SERIAL_BAUD 115200
