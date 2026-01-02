@@ -4,20 +4,18 @@
 #include "InputManager.h"
 #include "DisplayManager.h"
 #include "SoundManager.h"
-#include "PhysicsEngine.h"
-#include "DataLogger.h"
-#include "GXKernel.h"
-#include "OS_Apps.h"
+#include "ModelManager.h"
+#include "Mixer.h"
+#include "CommsManager.h" // Added for Dashboard
 
 // Screen Includes
 #include "Screen_Intro.h"
 #include "Screen_Dashboard.h"
 #include "Screen_Menu.h"
-#include "Screen_Telemetry.h"
-#include "Screen_Settings.h"
+#include "Screen_Calibration.h"
+// Keeping basic overlays
 #include "Screen_Popup.h"
 #include "Screen_Notification.h"
-#include "Screen_Calibration.h"
 
 // State Enumeration
 enum ScreenState {
@@ -56,21 +54,14 @@ private:
 public:
     void init() {
         // Init Cores
-        gxKernel.init();
-        physicsEngine.init();
-        dataLogger.init();
+        modelManager.init();
+        // mixer.init(); // Mixer just needs updates
         
         // Init Screens
         screenIntro.init();
         screenMenu.init();
-        screenTelemetry.init();
-        screenSettings.init();
         screenCalibration.init();
         screenNotification.init();
-        
-        // Init Apps
-        appStopwatch.init();
-        appTuner.init();
         
         // Ensure Inputs
         pinMode(PIN_BTN_MENU, INPUT_PULLUP);
@@ -86,18 +77,12 @@ public:
         if (screenPopup.isVisible() && screenPopup.isFinished()) screenPopup.hide();
         
         // --- CORE SYSTEM UPDATES ---
-        // Run Physics every frame
-        physicsEngine.update(inputManager.currentState.throttle, inputManager.currentState.steering);
+        // 1. Process Input -> Mixer
+        mixer.update();
         
-        // Log Data (Throttle, Steering, FakeSignal)
-        static unsigned long lastLog = 0;
-        if (millis() - lastLog > 50) { // 20Hz logging
-            dataLogger.log(inputManager.currentState.throttle, inputManager.currentState.steering, 90);
-            lastLog = millis();
-        }
-        
-        // Update GX
-        gxKernel.updateParticles();
+        // 2. Send Data (Real Mixer Output)
+        // CommsManager should read from Mixer, not Input directly
+        // comms.send(mixer.getMsgThrottle(), mixer.getMsgSteering()); // (Concept)
 
         // --- INPUT HANDLING ---
         unsigned long now = millis();
@@ -133,50 +118,34 @@ public:
             // State Machine
             switch(currentState) {
                 case SCREEN_DASHBOARD:
-                    if (btnSet) {
-                         lastInputTime = now;
-                         inputManager.resetTrim();
-                         showPopup("TRIM RESET", "OK", COLOR_ACCENT_PRI);
-                         soundManager.playConfirm();
-                    }
-                    if (btnP || btnM) {
-                        // Pass input to InputManager trim logic directly? 
-                        // It's handled in InputManager::update(), but we can add UI feedback here
-                    }
+                    if (btnMenu) { currentState = SCREEN_MENU; lastInputTime = now; }
                     break;
                     
                 case SCREEN_MENU:
-                    if (btnP) { screenMenu.prev(); soundManager.playClick(); lastInputTime = now; }
-                    if (btnM) { screenMenu.next(); soundManager.playClick(); lastInputTime = now; }
+                    // Pass inputs to the deep menu logic
+                    if (btnP) { 
+                        // If Editing, adjust value
+                        // screenMenu.adjustValue(1); 
+                        screenMenu.prev(); 
+                        soundManager.playClick(); lastInputTime = now; 
+                    }
+                    if (btnM) { 
+                        screenMenu.next(); 
+                        soundManager.playClick(); lastInputTime = now; 
+                    }
                     
                     if (btnSet) {
-                        lastInputTime = now;
+                        screenMenu.select();
                         soundManager.playConfirm();
-                        int s = screenMenu.getSelection();
-                        // 0=Dash, 1=Telem, 2=Settings, 3=About -> We need to expand Menu items for Apps
-                        // Hardcoded for now, let's inject Apps into index 1 and 2
-                        if (s == 0) currentState = SCREEN_DASHBOARD;
-                        if (s == 1) currentState = SCREEN_TELEMETRY;
-                        if (s == 2) currentState = SCREEN_SETTINGS;
-                        if (s == 3) currentState = SCREEN_APP_STOPWATCH; // Replaced About for now or added
+                        lastInputTime = now; 
                     }
-                    break;
                     
-                case SCREEN_TELEMETRY:
-                    screenTelemetry.update();
-                    if (btnSet) { currentState = SCREEN_MENU; lastInputTime = now; soundManager.playBack(); }
-                    break;
-                    
-                case SCREEN_SETTINGS:
-                    if (btnP || btnM) { screenSettings.next(); soundManager.playClick(); lastInputTime = now; }
-                    if (btnSet) { 
-                        // Long press SET in settings to enter calibration? 
-                        // Or just toggle normal settings. 
-                        // Let's make it so if you scroll past last item it goes to Calib?
-                        // For now, let's just make it a hidden combo: MENU + UP
-                        screenSettings.toggle(); soundManager.playConfirm(); lastInputTime = now; 
+                    if (btnMenu) {
+                        screenMenu.back(); // Back navigation
+                        lastInputTime = now;
+                        // If at root and press back? Maybe exit to dash?
+                        // Implemented in back() or here?
                     }
-                    if (btnMenu && btnP) { currentState = SCREEN_CALIBRATION; screenCalibration.init(); }
                     break;
                     
                 case SCREEN_CALIBRATION:
@@ -214,11 +183,7 @@ public:
             case SCREEN_INTRO: screenIntro.draw(&displayManager); break;
             case SCREEN_DASHBOARD: screenDashboard.draw(&displayManager); break;
             case SCREEN_MENU: screenMenu.draw(&displayManager); break;
-            case SCREEN_TELEMETRY: screenTelemetry.draw(&displayManager); break;
-            case SCREEN_SETTINGS: screenSettings.draw(&displayManager); break;
             case SCREEN_CALIBRATION: screenCalibration.draw(&displayManager); break;
-            case SCREEN_APP_STOPWATCH: appStopwatch.draw(&displayManager); break;
-            case SCREEN_APP_TUNER: appTuner.draw(&displayManager); break;
         }
         
         screenPopup.draw(&displayManager);
