@@ -1,3 +1,5 @@
+Ai generated for now 
+
 # OpenTX Professional - Firmware Guide
 
 Welcome to the new OpenTX Professional Firmware. This release focuses on a high-contrast, automotive-grade user interface designed for clarity and performance in the field.
