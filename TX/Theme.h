@@ -1,59 +1,39 @@
 #ifndef THEME_H
 #define THEME_H
 
-#include <TFT_eSPI.h>
+#include <Arduino.h>
 
 // ==========================================
-//          OBSIDIAN GLASS THEME (V7)
+//           VISUAL DESIGN SYSTEM
 // ==========================================
-// Aesthetic: Clean, Premium, Automotive, Digital
-// Goal: High Contrast, Smooth Gradients, No "Gamer" clutter.
 
-// Swap Bytes Helper
-#define RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
+// Helper to convert Hex to RGB565
+#define COLOR_RGB565(r, g, b) (((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
 
-// Backgrounds - "Apple Watch" Dark
-#define COLOR_BG_MAIN     0x0000               // Pure Black (Standard for OLED/LCD to hide bleed if capable, else deep grey)
-#define COLOR_BG_PANEL    RGB565(20, 20, 24)   // Soft Slate Grey (Card Backgrounds)
-#define COLOR_BG_HEADER   RGB565(10, 10, 10)   // Almost Black
-#define COLOR_BG_DIM      RGB565(5, 5, 5)      // Deep Gradient End
 
-// Accents - Focused & Professional
-#define COLOR_ACCENT_PRI  RGB565(0, 190, 255)  // Electric Blue (Primary Data)
-#define COLOR_ACCENT_SEC  RGB565(255, 60, 60)  // Sport Red (Alert/Limit)
-#define COLOR_ACCENT_TER  RGB565(50, 220, 100) // Success Green
-#define COLOR_ACCENT_GOLD RGB565(255, 180, 0)  // Warning/Highlight
+#define COL_BG_TOP       COLOR_RGB565(0x00, 0x31, 0x63) // #003163
 
-// Status Aliases
-#define COLOR_OK          COLOR_ACCENT_TER
-#define COLOR_WARN        COLOR_ACCENT_GOLD
-#define COLOR_ERR         COLOR_ACCENT_SEC
+// Card Surface (Lighter than BG)
+#define COL_CARD_STD     COLOR_RGB565(0x34, 0x49, 0x5E) // #34495E
 
-// UI Elements - Clean, Thin, Elegant
-#define COLOR_BORDER      RGB565(60, 70, 80)   // Subtle bezel
-#define COLOR_WIDGET_BG   RGB565(18, 18, 20)   // Widget fills
+// Accents (High Contrast)
+#define COL_ACCENT_PRI   COLOR_RGB565(0x00, 0xE5, 0xC8) // #00E5C8 (Cyan)
+#define COL_ACCENT_SEC   COLOR_RGB565(0xFF, 0xA0, 0x40) // Bright Orange
+#define COL_ACCENT_TER   COLOR_RGB565(0x00, 0xD0, 0xB0) // Teal
 
-// Text - MAXIMUM CONTRAST
-#define COLOR_TEXT_MAIN   0xFFFF               // Pure White
-#define COLOR_TEXT_DIM    RGB565(140, 145, 150)// Silver
-#define COLOR_TEXT_HI     0xFFFF               // White (Keep highlights simple)
+// Text
+#define COL_TEXT_PRI     COLOR_RGB565(0xEC, 0xF0, 0xF1) // White/Cloud
+#define COL_TEXT_SEC     COLOR_RGB565(0xBD, 0xC3, 0xC7) // Silver
+#define COL_TEXT_DIS     COLOR_RGB565(0x7F, 0x8C, 0x8D) // Concrete
 
-// Custom Fonts (SPIFFS/LittleFS Paths)
-#define FONT_PATH_LIGHT   "Montserrat_Light_10"
-#define FONT_PATH_REG     "Montserrat_Regular_12"
-#define FONT_PATH_BOLD    "Montserrat_Bold_18"
-#define FONT_PATH_DIGIT   "DSEG7_Classic_Bold_48"
+// Status
+#define COL_STATUS_OK    COLOR_RGB565(0x2E, 0xCC, 0x71) // Emerald
+#define COL_STATUS_DANGER COLOR_RGB565(0xE7, 0x4C, 0x3C) // Alizarin
 
-// Font Aliases (for code compatibility, mapped to 1 for now, logic in DisplayManager handled later)
-// Note: We will load these as GFXFonts or VLW. 
-// For now, we will use the string paths in loadFont calls.
-#define SCREEN_WIDTH  128
+// Dimensions (Portrait Target)
+// Assuming ILI9163 native usage
+#define SCREEN_WIDTH  128 
 #define SCREEN_HEIGHT 160
-
-// Legacy Font Aliases (Fallback if custom not loaded)
-#define FONT_SMALL  1
-#define FONT_MED    2
-#define FONT_LARGE  4
-#define FONT_NUMS   6
+#define RADIUS_CORNER 6
 
 #endif // THEME_H
