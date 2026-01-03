@@ -35,7 +35,7 @@ public:
         
         // Cyber Gradient & Grid
         GraphicsUtils::fillGradientRect(sprite, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG_MAIN, COLOR_BG_DIM);
-        GraphicsUtils::drawTechGrid(sprite);
+        // GraphicsUtils::drawTechGrid(sprite); // Deprecated
         
         unsigned long t = millis() - startTime;
 

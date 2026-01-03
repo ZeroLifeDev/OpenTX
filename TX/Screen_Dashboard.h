@@ -57,7 +57,7 @@ public:
         
         // 1. BG & Grid
         GraphicsUtils::fillGradientRect(sprite, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG_MAIN, COLOR_BG_DIM);
-        GraphicsUtils::drawTechGrid(sprite);
+        // GraphicsUtils::drawTechGrid(sprite); // Deprecated
 
         // --- INTERACTION LOGIC (Cinematic) ---
         // Gyro Toggle
@@ -80,155 +80,138 @@ public:
         }
         
         // Data Updates
+
+        // --- PRE-CALC ANIMATIONS ---
         int val = mixer.getMsgThrottle();       
         int rawThr = (val > 0) ? map(val, 0, 100, 0, 120) : 0; 
         needleAnim.set((float)rawThr); 
         needleAnim.update();
-        
         steerAnim.set((float)inputManager.getSteeringNormalized());
         steerAnim.update();
         
-        batAnim.set(commsManager.getRxVoltage() > 1.0 ? commsManager.getRxVoltage() : 8.2); // Fallback
-        batAnim.update();
-
-        // 2. HEADER HUD (Refined)
-        // Draw Solid Header
-        sprite->fillRect(0, 0, SCREEN_WIDTH, 22, COLOR_BG_PANEL);
-        sprite->drawFastHLine(0, 22, SCREEN_WIDTH, COLOR_ACCENT_PRI);
-        
-        // Pulsing "Connected" or "Scanning" indicator
         bool con = commsManager.isConnected();
-        uint16_t conCol = con ? COLOR_ACCENT_TER : COLOR_ACCENT_SEC;
+        batAnim.set(commsManager.getRxVoltage() > 1.0 ? commsManager.getRxVoltage() : 8.2);
+        batAnim.update();
         
-        if (con) {
-             sprite->fillRect(0, 0, 3, 22, conCol); // Left strip
-             // Data Flow animation
-             int flowX = (millis() / 50) % (SCREEN_WIDTH - 60);
-             sprite->drawPixel(flowX + 10, 21, COLOR_ACCENT_PRI);
+        // --- PASS 1: GRAPHICS & SHAPES (No Fonts) ---
+        
+        // HEADER BAR (Card)
+        sprite->fillRoundRect(2, 2, SCREEN_WIDTH-4, 24, 4, COLOR_BG_PANEL);
+        if (con) { 
+             // Active Link Indicator (Small dot)
+             sprite->fillCircle(10, 14, 3, (millis()/500)%2==0 ? COLOR_ACCENT_TER : COLOR_BG_MAIN);
         } else {
-             // Blink strip
-             if ((millis()/500)%2==0) sprite->fillRect(0, 0, 3, 22, conCol);
-             sprite->setTextColor(COLOR_ACCENT_SEC, COLOR_BG_PANEL);
-             sprite->setTextDatum(TC_DATUM);
-             sprite->drawString("NO LINK", SCREEN_WIDTH/2, 2, FONT_SMALL);
+             sprite->fillCircle(10, 14, 3, COLOR_ACCENT_SEC);
         }
 
-        // Model Name
-        if (con) {
-            sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
-            sprite->setTextDatum(TL_DATUM);
-            sprite->drawString(m->name, 8, 4, FONT_MED);
+        // SUSPENSION BAR (Clean Pill)
+        int susH = 70;
+        int susW = 6;
+        int susX = 5;
+        int susY = 45;
+        // Background track
+        sprite->fillRoundRect(susX, susY, susW, susH, 3, COLOR_BG_PANEL);
+        // Active Fill
+        int susVal = inputManager.currentState.potSuspension;
+        int fillH = map(susVal, 0, 4095, 0, susH);
+        uint16_t susCol = (fillH < susH/2) ? COLOR_ACCENT_TER : COLOR_ACCENT_SEC;
+        // Draw from bottom
+        sprite->fillRoundRect(susX, susY + (susH - fillH), susW, fillH, 3, susCol);
+
+        // MAIN CENTER GAUGE (Modern Ring)
+        int cx = SCREEN_WIDTH / 2 + 5;
+        int cy = 80; // Lower center
+        int r = 48; 
+        
+        // Background Ring (Dark)
+        sprite->drawSmoothArc(cx, cy, r, r-5, 45, 315, COLOR_BG_PANEL, COLOR_BG_MAIN, true);
+        
+        // Active Arc (Neon)
+        float nPct = needleAnim.val() / 120.0f; // 0.0 to 1.0
+        if (nPct > 0.01) {
+            int endAng = 45 + (int)(nPct * 270);
+            uint16_t arcCol = COLOR_ACCENT_PRI;
+            if (nPct > 0.7) arcCol = COLOR_ACCENT_SEC; // Redline
+            sprite->drawSmoothArc(cx, cy, r, r-5, 45, endAng, arcCol, COLOR_BG_MAIN, true);
         }
+
+        // Center Hub (Glassy)
+        sprite->fillCircle(cx, cy, 22, COLOR_BG_PANEL);
+        sprite->drawCircle(cx, cy, 22, COLOR_BORDER);
+
+        // WIDGET CARDS (Clean Rounded Rects)
+        int wy = 125;
+        // Trim
+        sprite->fillRoundRect(15, wy, 50, 30, 4, COLOR_BG_PANEL);
+        // Gyro
+        sprite->fillRoundRect(70, wy, 50, 30, 4, COLOR_BG_PANEL);
+
+
+        // --- PASS 2: TEXT (Custom Fonts) ---
+        
+        // 1. HEADERS (Bold)
+        display->loadFont(FONT_PATH_BOLD);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
+        sprite->setTextDatum(TL_DATUM);
+        sprite->drawString(m->name, 20, 5); // Beside dot
+        display->unloadFont();
+
+        // 2. DATA VALUES (Regular)
+        display->loadFont(FONT_PATH_REG);
         
         // TX Volts
-        char vBuf[8];
-        sprintf(vBuf, "%.1v", batAnim.val());
+        sprite->setTextColor(COLOR_TEXT_DIM, COLOR_BG_PANEL);
+        char vBuf[8]; sprintf(vBuf, "%.1v", batAnim.val());
         sprite->setTextDatum(TR_DATUM);
-        sprite->setTextColor(con ? COLOR_ACCENT_PRI : COLOR_TEXT_DIM, COLOR_BG_PANEL); 
-        sprite->drawString(vBuf, SCREEN_WIDTH-4, 4, FONT_MED);
+        sprite->drawString(vBuf, SCREEN_WIDTH-8, 7);
 
-        // 3. SUSPENSION BAR (Left Side)
-        // Vertical Bar
-        int susW = 6;
-        int susH = 80;
-        int susX = 4;
-        int susY = 40;
-        
-        sprite->drawRect(susX, susY, susW, susH, COLOR_BORDER);
-        // Fill based on pot
-        int susVal = inputManager.currentState.potSuspension; // 0-4095
-        int fillH = map(susVal, 0, 4095, 0, susH-2);
-        // Gradient fill logic (Green -> Yellow -> Red) (Inverse: Soft -> Stiff)
-        uint16_t susCol = (fillH < susH/2) ? COLOR_ACCENT_TER : COLOR_ACCENT_SEC;
-        
-        sprite->fillRect(susX+1, susY + (susH-2) - fillH + 1, susW-2, fillH, susCol);
-        
-        // Label
+        // Labels in Widgets
+        sprite->setTextColor(COLOR_TEXT_DIM, COLOR_BG_PANEL);
         sprite->setTextDatum(TC_DATUM);
-        sprite->setTextColor(COLOR_TEXT_DIM);
-        sprite->drawString("S", susX+3, susY-10, FONT_SMALL);
-
-        // 4. MAIN GAUGE (Center - Neon Arc)
-        int cx = SCREEN_WIDTH / 2 + 5; // Shift right slightly due to Susp bar
-        int cy = 70;
-        int r = 48;
+        sprite->drawString("TRIM", 40, wy+2); 
+        sprite->drawString("GYRO", 95, wy+2);
         
-        // Draw Dynamic Arc (No ticks, solid flow)
-        // We simulate a thick arc using multiple circles or lines
-        float nVal = needleAnim.val();
-        float nPct = nVal / 120.0f;
+        // Widget Values
+        sprite->setTextColor(COLOR_ACCENT_PRI, COLOR_BG_PANEL);
+        sprite->drawNumber(inputManager.internalTrim, 40, wy+14);
         
-        // Draw Background Ring
-        for(int i=0; i<360; i+=4) { // Dotted background
-             if (i > 130 && i < 410) continue; // Skip active area inverse? 
-             // Active area is 135 to 405 (270 deg)
-             // Let's just draw the active range static grey
+        // Gyro Value
+        if (inputManager.currentState.swGyro) {
+             sprite->setTextColor(COLOR_ACCENT_TER, COLOR_BG_PANEL);
+             sprite->drawString("ON", 95, wy+14);
+        } else {
+             sprite->setTextColor(COLOR_TEXT_DIM, COLOR_BG_PANEL);
+             sprite->drawString("OFF", 95, wy+14);
         }
         
-        int startAng = 135;
-        int sweep = 270;
-        
-        // Draw Segmented "Digital" Arc
-        // 20 segments
-        for(int i=0; i<20; i++) {
-             float segPct = i / 20.0f;
-             if (segPct > nPct) {
-                 // Dim Segment
-                 drawArcSegment(sprite, cx, cy, r, 6, startAng + (segPct*sweep), sweep/20 - 2, COLOR_BG_PANEL); // Empty slot style
-             } else {
-                 // Lit Segment
-                 uint16_t col = COLOR_ACCENT_PRI;
-                 if (segPct > 0.6) col = COLOR_ACCENT_SEC; // Redline
-                 drawArcSegment(sprite, cx, cy, r, 6, startAng + (segPct*sweep), sweep/20 - 2, col);
-             }
-        }
-
-        // --- HUB & SPEED ---
-        sprite->fillCircle(cx, cy, 18, COLOR_BG_PANEL); 
-        sprite->drawCircle(cx, cy, 18, COLOR_BORDER); 
-        
-        int speedVal = (int)commsManager.getSpeed();
-        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL); 
-        sprite->setTextDatum(MC_DATUM);
-        sprite->drawNumber(speedVal, cx, cy - 2, FONT_NUMS);
-        
+        // Speed Label
         sprite->setTextColor(COLOR_ACCENT_GOLD, COLOR_BG_PANEL);
-        sprite->drawString("KMH", cx, cy + 24, FONT_SMALL);
+        sprite->drawString("KMH", cx, cy + 12);
+        
+        display->unloadFont();
 
-        // 5. WIDGETS (Bottom)
-        int wy = 125;
-        
-        // Trim Box (Flash on update)
-        // uint16_t trimBorder = (millis() - flashTimer < 200 && lastTrim != inputManager.internalTrim) ? COLOR_TEXT_MAIN : COLOR_BORDER; // Removed flash logic
-        
-        GraphicsUtils::drawCornerWidget(sprite, 15, wy, 50, 30, COLOR_BORDER); // Changed to static border
-        sprite->setTextDatum(TC_DATUM);
-        sprite->setTextColor(COLOR_ACCENT_PRI);
-        sprite->drawString("TRM", 40, wy+3, FONT_SMALL);
-        sprite->drawNumber(inputManager.internalTrim, 40, wy+14, FONT_MED);
-        
-        // Gyro Box
-        uint16_t gyroCol = inputManager.currentState.swGyro ? COLOR_ACCENT_TER : COLOR_TEXT_DIM;
-        GraphicsUtils::drawCornerWidget(sprite, 70, wy, 50, 30, COLOR_BORDER);
-        sprite->setTextDatum(TC_DATUM);
-        sprite->setTextColor(COLOR_ACCENT_SEC);
-        sprite->drawString("GYR", 95, wy+3, FONT_SMALL);
-        sprite->setTextColor(gyroCol);
-        sprite->drawString(inputManager.currentState.swGyro ? "ON" : "OFF", 95, wy+14, FONT_MED);
-        
-        // 6. STEERING footer
-        // Split bar
-        int sx = SCREEN_WIDTH/2;
-        int sy = 158;
-        float sVal = steerAnim.val(); 
-        int sLen = map(abs((int)sVal), 0, 100, 0, 60);
-        
-        sprite->drawFastVLine(sx, 154, 6, COLOR_TEXT_DIM);
-        if (sVal > 0) sprite->fillRect(sx+2, sy, sLen, 2, COLOR_ACCENT_PRI);
-        else sprite->fillRect(sx-2-sLen, sy, sLen, 2, COLOR_ACCENT_PRI);
-        
-        // --- OVERLAY LAYER ---
-        // Render Cutscene on top of everything if active
+        // 3. DIGITAL SPEED (Huge DSEG)
+        display->loadFont(FONT_PATH_DIGIT);
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL);
+        sprite->setTextDatum(MC_DATUM);
+        int spd = (int)commsManager.getSpeed();
+        // Adjust Y for font baseline
+        sprite->drawNumber(spd, cx, cy - 5); 
+        display->unloadFont();
+
+        // --- LOGIC HANDLING ---
+        if (inputManager.currentState.swGyro != lastGyro) {
+            lastGyro = inputManager.currentState.swGyro;
+            soundManager.playGyroEffect(lastGyro);
+            if (lastGyro) notificationSystem.show("GYRO", "ARMED", COLOR_ACCENT_TER);
+            else notificationSystem.show("GYRO", "OFF", COLOR_ACCENT_SEC);
+        }
+        if (inputManager.internalTrim != lastTrim) {
+            lastTrim = inputManager.internalTrim;
+            soundManager.playClick();
+        }
+
+        // START/STOP Overlay handled by UIManager? 
         if (notificationSystem.isActive()) {
             notificationSystem.update();
             notificationSystem.draw(display);

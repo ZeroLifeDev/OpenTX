@@ -90,18 +90,20 @@ public:
         
         // Cyber Global BG
         GraphicsUtils::fillGradientRect(sprite, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG_MAIN, COLOR_BG_DIM);
-        GraphicsUtils::drawTechGrid(sprite);
+        // GraphicsUtils::drawTechGrid(sprite); // Deprecated
         
-        // Breadcrumb Header with Gradient
-        GraphicsUtils::fillGradientRect(sprite, 0, 0, SCREEN_WIDTH, 20, COLOR_BG_PANEL, COLOR_BG_DIM);
-        sprite->drawFastHLine(0, 20, SCREEN_WIDTH, COLOR_ACCENT_PRI); // Cyan separator
+        // Breadcrumb Header
+        sprite->fillRoundRect(2, 2, SCREEN_WIDTH-4, 24, 4, COLOR_BG_PANEL);
+        sprite->drawFastHLine(2, 26, SCREEN_WIDTH-4, COLOR_ACCENT_PRI);
         
+        display->loadFont(FONT_PATH_BOLD);
         sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_PANEL); 
         sprite->setTextDatum(ML_DATUM);
         
         String title = "MENU";
         if (state > 0) title += " > " + String(rootItems[rootSel]);
-        sprite->drawString(title, 4, 10, FONT_SMALL);
+        sprite->drawString(title, 10, 14);
+        display->unloadFont();
 
         // Update Animation
         int targetY = 0;
@@ -111,78 +113,77 @@ public:
         animY.set(targetY);
         animY.update();
         
-        int scrollOffset = 30; // disable scroll for root for now if fits
+        display->loadFont(FONT_PATH_REG);
+        int scrollOffset = 30; 
         
         if (state == 0) {
-            // ROOT LIST
+            // ROOT LIST (Cards)
             for(int i=0; i<3; i++) {
-                int drawY = 30 + (i * 26);
+                int drawY = 32 + (i * 35); // Bigger cards
                 
                 // Card Style with borders
-                uint16_t cardBg = (i == rootSel) ? COLOR_BG_PANEL : COLOR_BG_DIM;
+                uint16_t cardBg = (i == rootSel) ? COLOR_WIDGET_BG : COLOR_BG_PANEL;
                 uint16_t txtCol = (i == rootSel) ? COLOR_ACCENT_PRI : COLOR_TEXT_DIM;
-                uint16_t borderCol = (i == rootSel) ? COLOR_ACCENT_PRI : COLOR_BORDER;
+                uint16_t borderCol = (i == rootSel) ? COLOR_ACCENT_PRI : COLOR_BG_PANEL;
                 
                 // Draw Box
-                sprite->fillRoundRect(5, drawY, SCREEN_WIDTH-10, 22, 2, cardBg);
-                sprite->drawRoundRect(5, drawY, SCREEN_WIDTH-10, 22, 2, borderCol);
+                sprite->fillRoundRect(5, drawY, SCREEN_WIDTH-10, 30, 4, cardBg);
+                sprite->drawRoundRect(5, drawY, SCREEN_WIDTH-10, 30, 4, borderCol);
                 
                 // Active Glow indicator
                 if (i == rootSel) {
-                     sprite->fillCircle(12, drawY+11, 3, COLOR_ACCENT_TER); // Green dot
+                     sprite->fillCircle(15, drawY+15, 3, COLOR_ACCENT_TER); // Green dot
                 }
                 
                 // Label
                 sprite->setTextColor(txtCol, cardBg);
                 sprite->setTextDatum(MC_DATUM);
-                sprite->drawString(rootItems[i], SCREEN_WIDTH/2 + 5, drawY + 11, FONT_MED);
+                sprite->drawString(rootItems[i], SCREEN_WIDTH/2 + 5, drawY + 11);
             }
         }  
         else if (state == 1 || state == 2) {
             // SUB LIST (Setup Example)
             if (rootSel == 1) { // SETUP
                 for(int i=0; i<5; i++) {
-                    int drawY = scrollOffset + (i * 20); // Spaced up
+                    int drawY = scrollOffset + (i * 24); 
                     
-                    // Clip offscreen
-                    if (drawY < 20 || drawY > SCREEN_HEIGHT) continue;
+                    if (drawY < 24 || drawY > SCREEN_HEIGHT) continue;
 
                     // Highlight Row
                     if (i == subSel) {
-                         // Cyber Selection
-                         GraphicsUtils::fillGradientRect(sprite, 0, drawY, SCREEN_WIDTH, 18, COLOR_BG_PANEL, COLOR_BG_DIM);
-                         sprite->drawRect(0, drawY, SCREEN_WIDTH, 18, COLOR_ACCENT_PRI);
+                         // Active Pill
+                         sprite->fillRoundRect(2, drawY, SCREEN_WIDTH-4, 20, 3, COLOR_WIDGET_BG);
+                         sprite->drawRoundRect(2, drawY, SCREEN_WIDTH-4, 20, 3, COLOR_ACCENT_PRI);
                          
                          // Blinking if editing
                          if (state == 2 && (millis()/200)%2==0) {
-                             sprite->setTextColor(COLOR_TEXT_DIM, COLOR_BG_PANEL); 
+                             sprite->setTextColor(COLOR_TEXT_DIM, COLOR_WIDGET_BG); 
                          } else {
-                             sprite->setTextColor(COLOR_ACCENT_PRI, COLOR_BG_PANEL);
+                             sprite->setTextColor(COLOR_ACCENT_PRI, COLOR_WIDGET_BG);
                          }
                     } else {
-                        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN); // On top of grid? might need bg fill
+                        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN); 
                     }
                     
                     // Label
                     sprite->setTextDatum(ML_DATUM);
-                    sprite->drawString(setupItems[i], 5, drawY+5, FONT_SMALL);
+                    sprite->drawString(setupItems[i], 10, drawY + 9);
                     
-                    // Value
-                    int val = 0;
+                    // Value (Right aligned)
                     ModelData* m = modelManager.getModel();
-                    if (i==0) val = m->steering.epaMax;
-                    else if (i==1) val = m->steering.epaMin; 
-                    else if (i==2) val = m->steering.expo; 
-                    else if (i==3) val = m->throttle.expo;
-                    else if (i==4) val = m->steering.subTrim;
-                    
                     sprite->setTextDatum(MR_DATUM);
-                    sprite->drawString(String(val), SCREEN_WIDTH-5, drawY+5, FONT_SMALL);
+                    
+                    if (i==0) sprite->drawNumber(m->steering.epaMax, SCREEN_WIDTH-10, drawY+10);
+                    else if (i==1) sprite->drawNumber(m->steering.epaMin, SCREEN_WIDTH-10, drawY+10);
+                    else if (i==2) sprite->drawNumber(m->steering.expo, SCREEN_WIDTH-10, drawY+10);
+                    else if (i==3) sprite->drawNumber(m->throttle.expo, SCREEN_WIDTH-10, drawY+10);
+                    else if (i==4) sprite->drawNumber(m->steering.subTrim, SCREEN_WIDTH-10, drawY+10);
                 }
             } else {
-                sprite->drawString("COMING SOON...", 10, 50, FONT_SMALL);
+                sprite->drawString("COMING SOON...", 10, 50); // Removed FONT_SMALL
             }
         }
+        display->unloadFont();
     }
 };
 
