@@ -22,13 +22,7 @@ enum ScreenState {
     SCREEN_INTRO,
     SCREEN_DASHBOARD,
     SCREEN_MENU,
-    SCREEN_TELEMETRY,
-    SCREEN_SETTINGS,
-    SCREEN_CALIBRATION,
-    
-    // New Apps
-    SCREEN_APP_STOPWATCH,
-    SCREEN_APP_TUNER
+    SCREEN_CALIBRATION
 };
 
 class UIManager {
@@ -39,8 +33,6 @@ private:
     ScreenIntro screenIntro;
     ScreenDashboard screenDashboard;
     ScreenMenu screenMenu;
-    ScreenTelemetry screenTelemetry;
-    ScreenSettings screenSettings;
     ScreenCalibration screenCalibration;
     
     // Overlays
@@ -93,22 +85,31 @@ public:
 
         if (now - lastInputTime > DEBOUNCE) {
             
+            // Combo: MENU + TRIM+ -> Calibration
+            if (btnMenu && btnP) {
+                currentState = SCREEN_CALIBRATION;
+                screenCalibration.init();
+                lastInputTime = now;
+                return;
+            }
+
             // Global: MENU Button toggles or Exits
             if (btnMenu) {
                 lastInputTime = now;
                 soundManager.playBack();
                 
-                // If in App, exit to Menu
-                if (currentState == SCREEN_APP_STOPWATCH || currentState == SCREEN_APP_TUNER) {
+                // If in Calibration, handled by state machine or exit?
+                if (currentState == SCREEN_CALIBRATION) {
                     currentState = SCREEN_MENU;
+                    return;
                 }
-                // If in Screen, exit to Menu
-                else if (currentState == SCREEN_TELEMETRY || currentState == SCREEN_SETTINGS) {
-                    currentState = SCREEN_MENU;
-                } 
-                // If in Menu, Toggle Dashboard? Or Cycle? User seems to prefer Cycle now, but standard is toggle.
-                else if (currentState == SCREEN_MENU) {
-                    screenMenu.next(); // Cycle
+                
+                // Default handling: Go to Menu or Toggle Dashboard
+                if (currentState == SCREEN_MENU) {
+                    // If in Menu root, maybe exit to Dashboard?
+                    // For now, let's keep it simple: Menu Button Cycles or Enters Menu
+                    // User preference seems to be "Menu button opens Menu"
+                    currentState = SCREEN_DASHBOARD;
                 } else {
                     currentState = SCREEN_MENU;
                 }
@@ -122,15 +123,15 @@ public:
                     break;
                     
                 case SCREEN_MENU:
-                    // Pass inputs to the deep menu logic
+                    // MENU LOGIC
                     if (btnP) { 
-                        // If Editing, adjust value
-                        // screenMenu.adjustValue(1); 
-                        screenMenu.prev(); 
+                        if (screenMenu.isEditing()) screenMenu.adjustValue(1); 
+                        else screenMenu.prev(); 
                         soundManager.playClick(); lastInputTime = now; 
                     }
                     if (btnM) { 
-                        screenMenu.next(); 
+                        if (screenMenu.isEditing()) screenMenu.adjustValue(-1); 
+                        else screenMenu.next(); 
                         soundManager.playClick(); lastInputTime = now; 
                     }
                     
@@ -158,11 +159,6 @@ public:
                     if (btnMenu) currentState = SCREEN_MENU; // Abort
                     break;
 
-                case SCREEN_APP_STOPWATCH:
-                    appStopwatch.handleInput(btnSet, btnMenu);
-                    appStopwatch.update();
-                    if (btnSet) lastInputTime = now;
-                    break;
             }
         }
         

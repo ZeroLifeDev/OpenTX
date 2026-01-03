@@ -3,6 +3,8 @@
 
 #include "HardwareConfig.h" 
 #include <TFT_eSPI.h> 
+#include <FS.h>
+#include <LittleFS.h>
 #include "Theme.h"
 
 // ==========================================
@@ -13,34 +15,42 @@ class DisplayManager {
 private:
     TFT_eSPI tft;
     TFT_eSprite sprite;
+    bool fsOk;
 
 public:
-    DisplayManager() : tft(), sprite(&tft) {}
+    DisplayManager() : tft(), sprite(&tft), fsOk(false) {}
 
     void init() {
+        // 1. Init File System for Fonts
+        if (LittleFS.begin()) {
+            fsOk = true;
+            Serial.println("LittleFS Mounted");
+        } else {
+            Serial.println("LittleFS Failed");
+        }
+
         tft.init();
-        
-        // --- ILI9163 SPECIFIC FIXES ---
-        // 1. Rotation and Offsets
-        // ILI9163 128x160 often needs Rotation 0 for Portrait.
         tft.setRotation(0); 
-        
-        // 2. Color Correction (Red/Blue Swap)
-        // Most generic 1.8" displays need SwapBytes enabled for 16-bit color.
         tft.setSwapBytes(true); 
-        
-        // 3. Black/Red Tab Offset Fix
-        // Sometimes needed: tft.writecommand(0x21); // Invert off
         tft.fillScreen(COLOR_BG_MAIN);
 
         // --- SPRITE BUFFER ---
         sprite.setColorDepth(16);
         sprite.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
-        sprite.setSwapBytes(true); // Critical for Sprites too
+        sprite.setSwapBytes(true); 
     }
 
     TFT_eSprite* getSprite() {
         return &sprite;
+    }
+    
+    // Custom Font Helpers
+    void loadFont(String name) {
+        if (fsOk) sprite.loadFont(name);
+    }
+    
+    void unloadFont() {
+        if (fsOk) sprite.unloadFont();
     }
 
     void beginFrame() {

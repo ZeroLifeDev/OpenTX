@@ -18,7 +18,8 @@ typedef struct {
 
 // MUST MATCH RX EXACTLY
 typedef struct {
-    float rxVoltage; // Example telemetry
+    float rxVoltage; 
+    float speed;     // KM/H from MPU6050 integration
     bool active;
 } TelemetryPacket;
 
@@ -26,6 +27,8 @@ class CommsManager {
 private:
     ControlPacket packet;
     TelemetryPacket rxData;
+    
+    // ... peerInfo etc ... (unchanged)
     
     esp_now_peer_info_t peerInfo;
     uint8_t broadcastAddress[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -38,7 +41,6 @@ private:
     unsigned long lastBlink = 0;
     bool ledState = false;
     
-    // callback needs access to instance or valid static
 public:
     static void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, int len);
 
@@ -97,9 +99,12 @@ public:
     }
     
     bool isConnected() { return connected; }
+    float getSpeed() { return rxData.speed; } // Exposed accessor
+    float getRxVoltage() { return rxData.rxVoltage; }
     
     // Internal use for static callback
-    void markHeartbeat() {
+    void markHeartbeat(const uint8_t* data) {
+        memcpy(&rxData, data, sizeof(TelemetryPacket));
         if (!connected) {
             connected = true;
             soundManager.playConnected();
@@ -114,7 +119,7 @@ CommsManager commsManager;
 // Static Callback Implementation
 void CommsManager::OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, int len) {
     if (len == sizeof(TelemetryPacket)) {
-        commsManager.markHeartbeat();
+        commsManager.markHeartbeat(incomingData);
     }
 }
 

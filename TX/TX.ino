@@ -5,12 +5,29 @@
 #include "Theme.h"
 #include "InputManager.h"
 #include "DisplayManager.h"
+#include "Screen_Notification.h" // Fixed name
 #include "UIManager.h"
 #include "SoundManager.h"
 #include "CommsManager.h"
+#include "Mixer.h"
 
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+
+// Global Singletons logic:
+// Headers provide declarations/definitions.
+// HardwareConfig is just defines, no object needed.
+// Managers are defined in their headers (e.g., "InputManager inputManager;" at end of InputManager.h)
+// So we do NOT define them again here.
+
+// ScreenNotification is NOT defined in its header (it was extern'd), so we KEEP it here.
+ScreenNotification notificationSystem; 
+
+// UIManager is defined in UIManager.h? Let's check. 
+// If UIManager.h has "UIManager uiManager;" at bottom, we remove it here.
+// Same for DisplayManager etc.
+// Based on error message: "note: 'InputManager inputManager' previously declared here" in InputManager.h
+// This confirms they are in headers. removing them.
 
 // ==========================================
 //              SETUP
@@ -67,9 +84,10 @@ void loop() {
     // 2. Transmit Data (Rate Limited)
     if (millis() - lastTx >= TX_INTERVAL) {
         lastTx = millis();
+        // Use Mixer Output (Pro Logic) instead of Raw Input
         commsManager.sendData(
-            inputManager.getSteeringNormalized(),
-            inputManager.getThrottleNormalized(),
+            mixer.getMsgSteering(), // -100 to 100 (EPA/Expo applied)
+            mixer.getMsgThrottle(), // -100 to 100
             inputManager.currentState.potSuspension,
             inputManager.currentState.trimLevel,
             inputManager.currentState.swGyro

@@ -4,44 +4,53 @@
 #include <TFT_eSPI.h>
 
 // ==========================================
-//          TITANIUM PRO UI (V4)
+//          OBSIDIAN GLASS THEME (V7)
 // ==========================================
-// Commercial Style: High Contrast, Functional, No Neon.
-// Inspiration: Sanwa M17 / Futaba 7PX
+// Aesthetic: Clean, Premium, Automotive, Digital
+// Goal: High Contrast, Smooth Gradients, No "Gamer" clutter.
 
-// Safe Color Definitions (Standard RGB565)
-// If colors are still swapped, DisplayManager::setSwapBytes(true) fixes it.
+// Swap Bytes Helper
+#define RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 
-// Backgrounds
-#define COLOR_BG_MAIN     0x2124 // Dark Titanium Grey (Approx 33,33,33)
-#define COLOR_BG_PANEL    0x0000 // Black for data panels
-#define COLOR_BG_HEADER   0xF800 // Pro Orange (Sanwa-ish) or 0x01E8 (Deep Blue)
-// Let's go with a High-Vis Orange for Header to look "Race"
-// Actually user said "Pick different palette". Let's go Clean Blue/White/Grey.
-#undef COLOR_BG_HEADER
-#define COLOR_BG_HEADER   0x18C3 // Slate Blue
+// Backgrounds - "Apple Watch" Dark
+#define COLOR_BG_MAIN     0x0000               // Pure Black (Standard for OLED/LCD to hide bleed if capable, else deep grey)
+#define COLOR_BG_PANEL    RGB565(20, 20, 24)   // Soft Slate Grey (Card Backgrounds)
+#define COLOR_BG_HEADER   RGB565(10, 10, 10)   // Almost Black
+#define COLOR_BG_DIM      RGB565(5, 5, 5)      // Deep Gradient End
 
-// Text
-#define COLOR_TEXT_MAIN   0xFFFF // White
-#define COLOR_TEXT_DIM    0xBDF7 // Light Grey
-#define COLOR_TEXT_GLOW   0xFFFF // No Glow, just White
-#define COLOR_TEXT_HI     0xFAAA // Gold/Orange highlight
+// Accents - Focused & Professional
+#define COLOR_ACCENT_PRI  RGB565(0, 190, 255)  // Electric Blue (Primary Data)
+#define COLOR_ACCENT_SEC  RGB565(255, 60, 60)  // Sport Red (Alert/Limit)
+#define COLOR_ACCENT_TER  RGB565(50, 220, 100) // Success Green
+#define COLOR_ACCENT_GOLD RGB565(255, 180, 0)  // Warning/Highlight
 
-// Accents
-#define COLOR_ACCENT_PRI  0xFAAA // Gold/Orange (Active)
-#define COLOR_ACCENT_SEC  0xF800 // Red (Critical)
-#define COLOR_ACCENT_TER  0x07E0 // Green (Safe)
+// Status Aliases
+#define COLOR_OK          COLOR_ACCENT_TER
+#define COLOR_WARN        COLOR_ACCENT_GOLD
+#define COLOR_ERR         COLOR_ACCENT_SEC
 
-// Status
-#define COLOR_OK          0x07E0 // Green
-#define COLOR_WARN        0xFFE0 // Yellow
-#define COLOR_ERR         0xF800 // Red
+// UI Elements - Clean, Thin, Elegant
+#define COLOR_BORDER      RGB565(60, 70, 80)   // Subtle bezel
+#define COLOR_WIDGET_BG   RGB565(18, 18, 20)   // Widget fills
 
-// Layout
+// Text - MAXIMUM CONTRAST
+#define COLOR_TEXT_MAIN   0xFFFF               // Pure White
+#define COLOR_TEXT_DIM    RGB565(140, 145, 150)// Silver
+#define COLOR_TEXT_HI     0xFFFF               // White (Keep highlights simple)
+
+// Custom Fonts (SPIFFS/LittleFS Paths)
+#define FONT_PATH_LIGHT   "Montserrat_Light_10"
+#define FONT_PATH_REG     "Montserrat_Regular_12"
+#define FONT_PATH_BOLD    "Montserrat_Bold_18"
+#define FONT_PATH_DIGIT   "DSEG7_Classic_Bold_48"
+
+// Font Aliases (for code compatibility, mapped to 1 for now, logic in DisplayManager handled later)
+// Note: We will load these as GFXFonts or VLW. 
+// For now, we will use the string paths in loadFont calls.
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 160
 
-// Fonts
+// Legacy Font Aliases (Fallback if custom not loaded)
 #define FONT_SMALL  1
 #define FONT_MED    2
 #define FONT_LARGE  4

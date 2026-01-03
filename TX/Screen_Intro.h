@@ -4,6 +4,7 @@
 #include "DisplayManager.h"
 #include "Theme.h"
 #include "SoundManager.h"
+#include "GraphicsUtils.h"
 
 // Cinematic Boot Sequence
 class ScreenIntro {
@@ -23,67 +24,48 @@ public:
         if (complete) return;
         unsigned long t = millis() - startTime;
         
-        // Stage Logic
-        if (stage == 0 && t > 1200) stage = 1;
-        if (stage == 1 && t > 2500) stage = 2;
-        if (stage == 2 && t > 4000) complete = true;
+        // Single fluid stage
+        if (t > 2500) complete = true;
     }
 
     bool isFinished() { return complete; }
 
     void draw(DisplayManager* display) {
         TFT_eSprite* sprite = display->getSprite();
-        sprite->fillSprite(COLOR_BG_MAIN);
+        
+        // Cyber Gradient & Grid
+        GraphicsUtils::fillGradientRect(sprite, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG_MAIN, COLOR_BG_DIM);
+        GraphicsUtils::drawTechGrid(sprite);
         
         unsigned long t = millis() - startTime;
 
-        // Stage 0: Matrix Text Scroll
-        if (stage == 0) {
-            sprite->setTextColor(COLOR_ACCENT_PRI, COLOR_BG_MAIN);
-            sprite->setTextDatum(TL_DATUM);
-            int lines = (t / 100); // New line every 100ms
-            
-            int y = 5;
-            if (lines > 0) sprite->drawString("> BIOS CHECK...", 5, y, FONT_SMALL);
-            if (lines > 1) sprite->drawString("> MEMORY OK", 5, y+10, FONT_SMALL);
-            if (lines > 2) sprite->drawString("> IO PROTOCOL...", 5, y+20, FONT_SMALL);
-            if (lines > 3) sprite->drawString("> LINKING...", 5, y+30, FONT_SMALL);
-            if (lines > 4) sprite->drawString("> DRIVERS LOADED", 5, y+40, FONT_SMALL);
-            if (lines > 5) sprite->drawString("> SYSTEM READY", 5, y+50, FONT_SMALL);
-            
-            // Blink cursor
-            if ((t % 200) < 100) sprite->fillRect(5, y + (lines > 5 ? 60 : (lines+1)*10), 6, 8, COLOR_ACCENT_PRI);
-        }
+        // 1. LOGO ANIMATION (0 - 2000ms)
+        // Center huge
+        sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN); 
+        sprite->setTextDatum(MC_DATUM);
         
-        // Stage 1: Loading Bars
-        if (stage == 1) {
-            sprite->setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
-            sprite->setTextDatum(MC_DATUM);
-            sprite->drawString("LOADING MODULES", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, FONT_SMALL);
-            
-            int progress = map(t, 1200, 2500, 0, 100);
-            int barW = 100;
-            int barH = 6;
-            
-            // Frame
-            sprite->drawRect((SCREEN_WIDTH-barW)/2, SCREEN_HEIGHT/2, barW, barH, COLOR_BG_PANEL);
-            // Fill
-            int fill = map(progress, 0, 100, 0, barW-2);
-            sprite->fillRect((SCREEN_WIDTH-barW)/2 + 1, SCREEN_HEIGHT/2 + 1, fill, barH-2, COLOR_ACCENT_PRI);
-            
-            // Rapid random numbers
-            sprite->drawString(String(random(1000,9999)), SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, FONT_SMALL);
-        }
+        sprite->drawString("OpenTX", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, FONT_LARGE);
         
-        // Stage 2: Logo Success
-        if (stage == 2) {
-            sprite->setTextColor(COLOR_TEXT_GLOW, COLOR_BG_MAIN);
-            sprite->setTextDatum(MC_DATUM);
-            sprite->drawString("OpenTX", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 10, FONT_LARGE);
-            
-            sprite->setTextColor(COLOR_TEXT_DIM, COLOR_BG_MAIN);
-            sprite->drawString("PRO V4", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 15, FONT_MED);
-        }
+        sprite->setTextColor(COLOR_ACCENT_PRI); // Cyan Pro
+        sprite->drawString("PRO", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 10, FONT_MED);
+
+        // 2. PROGRESS BAR (Bottom)
+        int barW = 80;
+        int barH = 6;
+        int bx = (SCREEN_WIDTH - barW) / 2;
+        int by = SCREEN_HEIGHT - 40;
+        
+        float progress = (float)t / 2000.0f;
+        if (progress > 1.0f) progress = 1.0f;
+        
+        // Detailed Tech Bar
+        sprite->drawRect(bx-2, by-2, barW+4, barH+4, COLOR_BORDER);
+        GraphicsUtils::drawProgressBar(sprite, bx, by, barW, barH, progress, COLOR_ACCENT_TER, COLOR_BG_PANEL); // Green bar
+        
+        // Version
+        sprite->setTextColor(COLOR_TEXT_DIM);
+        sprite->setTextDatum(BC_DATUM);
+        sprite->drawString("v5.0 Commercial", SCREEN_WIDTH/2, SCREEN_HEIGHT - 10, FONT_SMALL);
     }
 };
 
