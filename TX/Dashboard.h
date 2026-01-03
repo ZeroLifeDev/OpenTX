@@ -8,17 +8,6 @@
 
 extern TFT_eSprite sprite; // Defined in TX.ino
 
-// Animation Helper
-class AnimFloat {
-private:
-    float _val, _target, _smooth;
-public:
-    AnimFloat(float val, float smooth) : _val(val), _target(val), _smooth(smooth) {}
-    void set(float t) { _target = t; }
-    void update() { _val += (_target - _val) * _smooth; }
-    float val() { return _val; }
-};
-
 class ScreenDashboard {
 private:
     AnimFloat needleAnim;

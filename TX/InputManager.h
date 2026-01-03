@@ -14,11 +14,15 @@
 #ifndef PIN_BTN_MENU
   #define PIN_BTN_MENU 23
 #endif
+#ifndef PIN_BTN_SET
+  #define PIN_BTN_SET 25 // Default Set Pin
+#endif
 
 class InputManager {
 private:
     unsigned long btnPressTime = 0;
     bool lastMenuState = true; 
+    bool lastSetState = true;
     bool lastUpState = true;
     bool lastDownState = true;
     
@@ -26,48 +30,57 @@ public:
     // Navigation Events
     bool navUp = false;
     bool navDown = false;
-    bool navSelect = false;
-    bool navHome = false;
+    bool navSet = false; // "Select" / Enter
+    bool navBack = false; // "Back" / Exit
+    bool navHome = false; // Long Press Menu
 
     void init() {
          pinMode(PIN_BTN_TRIM_PLUS, INPUT_PULLUP);
          pinMode(PIN_BTN_TRIM_MINUS, INPUT_PULLUP);
          pinMode(PIN_BTN_MENU, INPUT_PULLUP);
+         pinMode(PIN_BTN_SET, INPUT_PULLUP);
     }
 
     void update() {
         // Reset One-Shot Events
-        navUp = false; navDown = false; navSelect = false; navHome = false;
+        navUp = false; navDown = false; navSet = false; navBack = false; navHome = false;
         
-        // 1. MENU BUTTON LOGIC
+        // 1. MENU BUTTON (BACK / HOME)
         bool currMenu = digitalRead(PIN_BTN_MENU);
-        
-        if (lastMenuState && !currMenu) { // Button Pressed (Falling Edge)
+        if (lastMenuState && !currMenu) { // Press
             btnPressTime = millis();
         }
-        if (!lastMenuState && currMenu) { // Button Released (Rising Edge)
+        if (!lastMenuState && currMenu) { // Release
             unsigned long dur = millis() - btnPressTime;
             if (dur < 800) {
-                navSelect = true; // Short Press = Select
-                sound.playClick();
+                navBack = true; // Short = Back
+                sound.playBack();
             } else {
-                navHome = true;   // Long Press = Home
+                navHome = true; // Long = Home
                 sound.playBack();
             }
         }
         lastMenuState = currMenu;
+
+        // 2. SET BUTTON (SELECT)
+        bool currSet = digitalRead(PIN_BTN_SET);
+        if (lastSetState && !currSet) {
+             navSet = true;
+             sound.playSelect();
+        }
+        lastSetState = currSet;
         
-        // 2. TRIM BUTTONS AS NAVIGATION
+        // 3. TRIM TRANSITIONS (SCROLL)
         bool currUp = digitalRead(PIN_BTN_TRIM_PLUS);
         bool currDown = digitalRead(PIN_BTN_TRIM_MINUS);
         
         if (lastUpState && !currUp) {
              navUp = true;
-             sound.playClick();
+             sound.playScroll();
         }
         if (lastDownState && !currDown) {
              navDown = true;
-             sound.playClick();
+             sound.playScroll();
         }
         
         lastUpState = currUp;

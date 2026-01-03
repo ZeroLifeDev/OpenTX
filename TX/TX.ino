@@ -62,24 +62,20 @@ void handleNavigation() {
 
     switch (currentState) {
         case STATE_DASHBOARD:
-            if (input.navSelect) {
+            if (input.navBack) { // Short Menu Press = Menu
                 currentState = STATE_MENU_MAIN;
                 menu.reset();
-            }
-            // Quick Trim Adjust on Dashboard
-            if (input.navUp) { 
-                state.steerTrim++; 
-                prefs.putInt("trim_s", state.steerTrim); 
-            }
-            if (input.navDown) { 
-                state.steerTrim--; 
-                prefs.putInt("trim_s", state.steerTrim); 
             }
             break;
             
         case STATE_MENU_MAIN:
             menu.nav(input.navUp, input.navDown, menuMainCount);
-            if (input.navSelect) {
+            
+            if (input.navBack) { // Back to Dashboard
+                currentState = STATE_DASHBOARD;
+            }
+            
+            if (input.navSet) {
                 int sel = menu.getSelection();
                 if (sel == 0) { currentState = STATE_MENU_SETTINGS; menu.reset(); }
                 if (sel == 1) currentState = STATE_TELEMETRY;
@@ -90,15 +86,22 @@ void handleNavigation() {
             
         case STATE_MENU_SETTINGS:
             menu.nav(input.navUp, input.navDown, menuSettingsCount);
-            if (input.navSelect) {
+            
+            if (input.navBack) {
+                currentState = STATE_MENU_MAIN;
+                menu.reset();
+            }
+            
+            if (input.navSet) { // Placeholder for entering sub-items
+                // For now, most just beep or go back
                 int sel = menu.getSelection();
-                if (sel == 4) { currentState = STATE_MENU_MAIN; menu.reset(); } // Back
+                if (sel == 6) { currentState = STATE_MENU_MAIN; menu.reset(); } // Back Option
             }
             break;
             
         case STATE_TELEMETRY:
         case STATE_ABOUT:
-            if (input.navSelect) {
+            if (input.navBack || input.navSet) {
                 sound.playBack();
                 currentState = STATE_MENU_MAIN; 
             }
@@ -118,21 +121,10 @@ void drawScreens() {
             menu.draw("SETTINGS", menuSettingsItems, menuSettingsCount);
             break;
         case STATE_TELEMETRY:
-            sprite.fillSprite(COLOR_BG_MAIN);
-            sprite.setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
-            sprite.setTextDatum(MC_DATUM);
-            sprite.drawString("TELEMETRY", 64, 20, 2);
-            sprite.drawString("RX: 0.00v", 64, 60, 2);
-            sprite.drawString("TX: 0.00v", 64, 90, 2);
-            sprite.drawString("[CLICK TO EXIT]", 64, 140, 1);
+            menu.drawTelemetry(state);
             break;
         case STATE_ABOUT:
-            sprite.fillSprite(COLOR_BG_MAIN);
-            sprite.setTextColor(COLOR_TEXT_MAIN, COLOR_BG_MAIN);
-            sprite.setTextDatum(MC_DATUM);
-            sprite.drawString("OPEN TX", 64, 40, 4);
-            sprite.drawString("v2.0 Fixed", 64, 80, 2);
-            sprite.drawString("[CLICK TO EXIT]", 64, 140, 1);
+            menu.drawAbout();
             break;
     }
 }
