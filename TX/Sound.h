@@ -27,46 +27,51 @@ public:
         }
     }
 
-    // Soft Haptic Chime: High freq, short duration
-    void playClick() {
+    // --- HIGH-TECH UI SOUNDS ---
+    
+    void playClick() { // Cursor Move
         if (!tonesActive) { 
-            tone(PIN_BUZZER, 2400); // 2.4kHz "Click"
-            toneEndTime = millis() + 15; 
+            tone(PIN_BUZZER, 4000); // 4kHz crisp tick
+            toneEndTime = millis() + 5; // Extremely short (5ms)
             tonesActive = true;
         }
     }
     
-    void playScroll() {
+    void playScroll() { // Wheel/Trim
         if (!tonesActive) {
-            tone(PIN_BUZZER, 2800); 
-            toneEndTime = millis() + 10; // Very short tick
+            tone(PIN_BUZZER, 4500); 
+            toneEndTime = millis() + 5; 
             tonesActive = true;
         }
     }
 
-    void playSelect() {
-        tone(PIN_BUZZER, 3500); 
-        toneEndTime = millis() + 50;
+    void playSelect() { // Enter / Set
+        // Two-tone rising "Chirp" simulated
+        // Note: rapid tone calls might not work perfectly non-blocking, so we use a high 'ding'
+        tone(PIN_BUZZER, 5500); 
+        toneEndTime = millis() + 30; // 30ms "Ding"
         tonesActive = true;
     }
     
-    void playBack() {
-        tone(PIN_BUZZER, 1000); 
-        toneEndTime = millis() + 30;
+    void playBack() { // Cancel / Back
+        // Lower pitch "descend" feel
+        tone(PIN_BUZZER, 2500); 
+        toneEndTime = millis() + 20;
         tonesActive = true;
     }
     
     void playError() {
-        tone(PIN_BUZZER, 150); 
-        toneEndTime = millis() + 150;
+        tone(PIN_BUZZER, 1000); 
+        toneEndTime = millis() + 100;
         tonesActive = true;
     }
 
     void playStartup() {
-        // Simple blocking startup sequence
-        tone(PIN_BUZZER, 2000, 80); delay(100);
-        tone(PIN_BUZZER, 3000, 80); delay(100);
-        tone(PIN_BUZZER, 4000, 100); delay(150);
+        // Sci-Fi Power Up
+        for(int i=2000; i<6000; i+=500) {
+            tone(PIN_BUZZER, i);
+            delay(30);
+        }
         noTone(PIN_BUZZER);
     }
 };

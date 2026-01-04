@@ -15,7 +15,8 @@ private:
     float gyroAngle = 0; // For animation
 
 public:
-    ScreenDashboard() : needleAnim(0, 0.2), steerAnim(0, 0.3) {}
+    // Stiffness 0.1 (Lazy), Damping 0.85 (Smooth)
+    ScreenDashboard() : needleAnim(0, 0.1, 0.85), steerAnim(0, 0.15, 0.8) {}
 
     void draw(InputState &s) {
         // Clear BG

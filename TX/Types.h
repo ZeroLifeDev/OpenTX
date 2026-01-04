@@ -31,13 +31,30 @@ struct InputState {
 // ==========================================
 //           SHARED UTILS
 // ==========================================
+// ==========================================
+//           SHARED UTILS
+// ==========================================
 class AnimFloat {
 private:
-    float _val, _target, _smooth;
+    float _val, _target, _vel;
+    float _stiffness; // 0.1 to 0.5 (Spring force)
+    float _damping;   // 0.0 to 1.0 (Friction)
 public:
-    AnimFloat(float val, float smooth) : _val(val), _target(val), _smooth(smooth) {}
+    // Constructor: Val, Stiffness (Strength), Damping (Friction)
+    // Good defaults: 0.2, 0.85
+    AnimFloat(float val, float stiffness, float damping) 
+        : _val(val), _target(val), _vel(0), _stiffness(stiffness), _damping(damping) {}
+        
     void set(float t) { _target = t; }
-    void update() { _val += (_target - _val) * _smooth; }
+    
+    void update() {
+        // Spring Physics: F = -kx
+        float force = (_target - _val) * _stiffness;
+        _vel += force;
+        _vel *= _damping; // Apply friction
+        _val += _vel;
+    }
+    
     float val() { return _val; }
 };
 

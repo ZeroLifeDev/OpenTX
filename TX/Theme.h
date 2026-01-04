@@ -28,7 +28,6 @@
 #define TC_DATUM 1
 
 // --- GLOBAL THEME MAPPING ---
-// Map semantic names (COLOR_*) to palette colors (COL_*)
 #define COLOR_BG_MAIN    COL_BG_TOP
 #define COLOR_BG_PANEL   COL_CARD_STD
 #define COLOR_ACCENT_PRI COL_ACCENT_PRI

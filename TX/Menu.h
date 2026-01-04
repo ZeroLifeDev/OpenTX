@@ -20,48 +20,51 @@ private:
     AnimFloat cursorAnim;
     
 public:
-    ScreenMenu() : cursorAnim(0, 0.35) {} // 0.35 = snappy bounce
+    // Stiffness 0.2, Damping 0.75 -> Nice bounce
+    ScreenMenu() : cursorAnim(0, 0.2, 0.75) {} 
 
     void reset() { 
         selectIdx = 0; 
         cursorAnim.set(0); 
-        // Force immediate snap on reset
     }
     
     void draw(const char* title, const char* items[], int count) {
-        sprite.fillSprite(TFT_BLACK); // Force Black
+        sprite.fillSprite(0x0000); // BLACK
         
         // Update Animation
         cursorAnim.set((float)selectIdx);
         cursorAnim.update();
         
         // Header
-        sprite.fillRect(0, 0, 128, 28, 0x18E3); // Dark Grey (Hardcoded)
-        sprite.setTextColor(TFT_WHITE, 0x18E3);
+        sprite.fillRect(0, 0, 128, 28, 0x18E3); // Dark Grey
+        sprite.setTextColor(0xFFFF, 0x18E3);    // WHITE on Grey
         sprite.setTextDatum(MC_DATUM);
-        sprite.drawString(title, 64, 14, 2);
-        sprite.drawFastHLine(0, 28, 128, TFT_WHITE); 
+        sprite.drawString(title, 64, 14, 2);    // Font 2 for Title (Usually safe)
+        sprite.drawFastHLine(0, 28, 128, 0xFFFF); 
         
         // List
-        int startY = 38;
-        int rowH = 22;
+        int startY = 40;
+        int rowH = 26; // Taller rows for Font 4
         
-        // Draw Cursor (floating)
+        // Draw Cursor (Springy)
         float curY = startY + (cursorAnim.val() * rowH);
-        sprite.fillRoundRect(8, (int)curY, 112, 18, 4, 0x07FF); // Cyan Highlight
+        sprite.fillRoundRect(8, (int)curY, 112, 22, 4, 0x07FF); // Cyan Highlight
         
         for (int i=0; i<count; i++) {
             int y = startY + (i * rowH);
             
             // Text color logic
             if (i == selectIdx) {
-                sprite.setTextColor(TFT_BLACK, 0x07FF); // Black text on Cyan
+                // If it's selected, it overlaps the Cyan box -> Black Text
+                sprite.setTextColor(0x0000, 0x07FF); 
             } else {
-                sprite.setTextColor(TFT_WHITE, TFT_BLACK); // White text on Black
+                // Unselected -> White Text on Black
+                sprite.setTextColor(0xFFFF, 0x0000); 
             }
             
             sprite.setTextDatum(MC_DATUM);
-            sprite.drawString(items[i], 64, y + 10, 2);
+            // Using Font 4 (Larger, bold) to ensure visibility
+            sprite.drawString(items[i], 64, y + 12, 4);
         }
     }
     
