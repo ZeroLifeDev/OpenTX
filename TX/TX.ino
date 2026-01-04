@@ -37,6 +37,8 @@
 #include "InputManager.h"
 #include "Dashboard.h"
 #include "Menu.h"
+#include "Screen_Telemetry.h"
+#include "Screen_About.h"
 
 // --- GLOBALS ---
 Preferences prefs;
@@ -120,11 +122,22 @@ void drawScreens() {
         case STATE_MENU_SETTINGS:
             menu.draw("SETTINGS", menuSettingsItems, menuSettingsCount);
             break;
+void drawScreens() {
+    switch (currentState) {
+        case STATE_DASHBOARD:
+            dashboard.draw(state);
+            break;
+        case STATE_MENU_MAIN:
+            menu.draw("MAIN MENU", menuMainItems, menuMainCount);
+            break;
+        case STATE_MENU_SETTINGS:
+            menu.draw("SETTINGS", menuSettingsItems, menuSettingsCount);
+            break;
         case STATE_TELEMETRY:
-            menu.drawTelemetry(state);
+            screenTelemetry.draw(state);
             break;
         case STATE_ABOUT:
-            menu.drawAbout();
+            screenAbout.draw();
             break;
     }
 }
