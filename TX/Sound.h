@@ -74,6 +74,22 @@ public:
         }
         noTone(PIN_BUZZER);
     }
+
+    void playGyroOn() {
+        // "Charging Up" sound
+        tone(PIN_BUZZER, 2000); delay(50);
+        tone(PIN_BUZZER, 4000); delay(50);
+        tone(PIN_BUZZER, 6000); delay(100);
+        noTone(PIN_BUZZER);
+    }
+
+    void playGyroOff() {
+        // "Power Down" sound
+        tone(PIN_BUZZER, 6000); delay(50);
+        tone(PIN_BUZZER, 3000); delay(50);
+        tone(PIN_BUZZER, 1000); delay(100);
+        noTone(PIN_BUZZER);
+    }
 };
 
 static SoundManager sound; // Global instance
