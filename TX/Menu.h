@@ -38,7 +38,7 @@ public:
         // Header (Blue bar)
         sprite.fillRect(0, 0, 128, 30, 0x001F); // Blue
         sprite.setTextColor(TFT_WHITE, 0x001F);
-        sprite.setTextDatum(MC_DATUM);
+        sprite.setTextDatum(MC_DATUM); // Middle Center
         sprite.drawString(title, 64, 15, 2); 
         
         // Cursor (White Block)
@@ -48,9 +48,12 @@ public:
         sprite.fillRoundRect(5, curY, 118, 20, 6, TFT_WHITE); // White Highlight
         
         // List Items
+        sprite.setTextDatum(MC_DATUM); // Center Align (Like Dashboard)
+        
         for (int i=0; i<count; i++) {
             int y = startY + (i * rowH);
             
+            // Text color logic
             if (abs((float)i - cursorAnim.val()) < 0.5) {
                  // Selected: Black Text (on White block)
                  sprite.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -59,8 +62,10 @@ public:
                  sprite.setTextColor(TFT_WHITE, TFT_BLACK);
             }
             
-            sprite.setTextDatum(ML_DATUM); // Left Align for list
-            sprite.drawString(items[i], 20, y + 10, 2); // Font 2 is standard
+            // Drawing string exactly like Dashboard "KM/H" label
+            // Center X = 64
+            // Font 2
+            sprite.drawString(items[i], 64, y + 10, 2); 
         }
     }
     

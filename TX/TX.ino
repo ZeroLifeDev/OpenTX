@@ -111,17 +111,7 @@ void handleNavigation() {
     }
 }
 
-void drawScreens() {
-    switch (currentState) {
-        case STATE_DASHBOARD:
-            dashboard.draw(state);
-            break;
-        case STATE_MENU_MAIN:
-            menu.draw("MAIN MENU", menuMainItems, menuMainCount);
-            break;
-        case STATE_MENU_SETTINGS:
-            menu.draw("SETTINGS", menuSettingsItems, menuSettingsCount);
-            break;
+
 void drawScreens() {
     switch (currentState) {
         case STATE_DASHBOARD:
