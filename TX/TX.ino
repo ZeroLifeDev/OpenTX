@@ -1,200 +1,202 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <TFT_eSPI.h> 
 #include <Preferences.h>
+#include <esp_heap_caps.h>
+#include <math.h>
 
-// --- CONFIG & CONSTANTS ---
-#if __has_include("HardwareConfig.h")
-  #include "HardwareConfig.h"
-#endif
-
-// Fallback Pin Config
-#ifndef PIN_STEERING
-  #define PIN_STEERING 34
-#endif
-#ifndef PIN_THROTTLE
-  #define PIN_THROTTLE 35
-#endif
-#ifndef PIN_POT_SUSPENSION
-  #define PIN_POT_SUSPENSION 32
-#endif
-#ifndef PIN_SW_GYRO
-  #define PIN_SW_GYRO 22
-#endif
-
-// Calibration Offsets
-#ifndef STEER_CENTER_FIX
-  #define STEER_CENTER_FIX 0
-#endif
-#ifndef THROT_CENTER_FIX
-  #define THROT_CENTER_FIX 0
-#endif
-
-// --- MODULAR INCLUDES ---
-#include "Types.h"
-#include "Theme.h"
-#include "Sound.h"
+#include "HardwareConfig.h"
+#include "PanelIO.h"
+#include "Palette.h"
+#include "Renderer.h"
 #include "InputManager.h"
-#include "Dashboard.h"
-#include "Menu.h"
-#include "Screen_Telemetry.h"
-#include "Screen_About.h"
+#include "UiState.h"
+#include "Ui.h"
+#include "Buzzer.h"
 
-// --- GLOBALS ---
-Preferences prefs;
-TFT_eSPI tft = TFT_eSPI(); 
-TFT_eSprite sprite = TFT_eSprite(&tft); // Global sprite for screens
+static Palette palette;
+static Renderer renderer;
+static InputManager input;
+static UiManager ui;
+static Buzzer buzzer;
+static Preferences prefs;
 
-// State
-AppState currentState = STATE_DASHBOARD;
-InputState state;
+static UiState state;
 
-// ==========================================
-//            MAIN LOGIC & LOOP
-// ==========================================
-void handleNavigation() {
-    input.update();
-    
-    // Global Home Short-circuit
-    if (input.navHome) {
-        if (currentState != STATE_DASHBOARD) sound.playBack();
-        currentState = STATE_DASHBOARD;
-        return;
-    }
+static uint16_t *frameA = nullptr;
+static uint16_t *frameB = nullptr;
+static uint16_t *frontBuffer = nullptr;
+static uint16_t *backBuffer = nullptr;
 
-    switch (currentState) {
-        case STATE_DASHBOARD:
-            if (input.navBack) { // Short Menu Press = Menu
-                currentState = STATE_MENU_MAIN;
-                menu.reset();
-            }
-            break;
-            
-        case STATE_MENU_MAIN:
-            menu.nav(input.navUp, input.navDown, menuMainCount);
-            
-            if (input.navBack) { // Back to Dashboard
-                currentState = STATE_DASHBOARD;
-            }
-            
-            if (input.navSet) {
-                int sel = menu.getSelection();
-                if (sel == 0) { currentState = STATE_MENU_SETTINGS; menu.reset(); }
-                if (sel == 1) currentState = STATE_TELEMETRY;
-                if (sel == 2) currentState = STATE_ABOUT;
-                if (sel == 3) currentState = STATE_DASHBOARD;
-            }
-            break;
-            
-        case STATE_MENU_SETTINGS:
-            menu.nav(input.navUp, input.navDown, menuSettingsCount);
-            
-            if (input.navBack) {
-                currentState = STATE_MENU_MAIN;
-                menu.reset();
-            }
-            
-            if (input.navSet) { // Placeholder for entering sub-items
-                // For now, most just beep or go back
-                int sel = menu.getSelection();
-                if (sel == 6) { currentState = STATE_MENU_MAIN; menu.reset(); } // Back Option
-            }
-            break;
-            
-        case STATE_TELEMETRY:
-        case STATE_ABOUT:
-            if (input.navBack || input.navSet) {
-                sound.playBack();
-                currentState = STATE_MENU_MAIN; 
-            }
-            break;
-    }
+static const int16_t kWidth = PanelIO::kWidth;
+static const int16_t kHeight = PanelIO::kHeight;
+static const int16_t kTileW = 16;
+static const int16_t kTileH = 16;
+
+static uint32_t lastFrameMs = 0;
+static uint32_t lastFpsMs = 0;
+static uint16_t frameCount = 0;
+static uint32_t lastSimMs = 0;
+static uint32_t lastDriveMs = 0;
+
+static void allocateBuffers() {
+  size_t bufSize = static_cast<size_t>(kWidth) * kHeight * sizeof(uint16_t);
+  frameA = static_cast<uint16_t *>(heap_caps_malloc(bufSize, MALLOC_CAP_DMA));
+  frameB = static_cast<uint16_t *>(heap_caps_malloc(bufSize, MALLOC_CAP_DMA));
+  if (!frameA || !frameB) {
+    Serial.println("Frame buffer allocation failed");
+    while (true) { delay(100); }
+  }
+  frontBuffer = frameA;
+  backBuffer = frameB;
 }
 
+static void flushDirtyTiles() {
+  const int tilesX = (kWidth + kTileW - 1) / kTileW;
+  const int tilesY = (kHeight + kTileH - 1) / kTileH;
 
-void drawScreens() {
-    switch (currentState) {
-        case STATE_DASHBOARD:
-            dashboard.draw(state);
+  for (int ty = 0; ty < tilesY; ++ty) {
+    for (int tx = 0; tx < tilesX; ++tx) {
+      int x = tx * kTileW;
+      int y = ty * kTileH;
+      int w = (x + kTileW <= kWidth) ? kTileW : (kWidth - x);
+      int h = (y + kTileH <= kHeight) ? kTileH : (kHeight - y);
+
+      bool dirty = false;
+      for (int yy = 0; yy < h && !dirty; ++yy) {
+        int idx = (y + yy) * kWidth + x;
+        for (int xx = 0; xx < w; ++xx) {
+          if (backBuffer[idx + xx] != frontBuffer[idx + xx]) {
+            dirty = true;
             break;
-        case STATE_MENU_MAIN:
-            menu.draw("MAIN MENU", menuMainItems, menuMainCount);
-            break;
-        case STATE_MENU_SETTINGS:
-            menu.draw("SETTINGS", menuSettingsItems, menuSettingsCount);
-            break;
-        case STATE_TELEMETRY:
-            screenTelemetry.draw(state);
-            break;
-        case STATE_ABOUT:
-            screenAbout.draw();
-            break;
+          }
+        }
+      }
+
+      if (dirty) {
+        PanelIO::pushRectDMA(x, y, w, h, backBuffer, kWidth);
+      }
     }
+  }
+}
+
+static void updateSensors() {
+  state.rawSteer = analogRead(PIN_STEERING);
+  state.rawThrottle = analogRead(PIN_THROTTLE);
+  state.rawSuspension = analogRead(PIN_POT_SUSPENSION);
+
+  state.btnMenu = (digitalRead(PIN_BTN_MENU) == LOW);
+  state.btnSet = (digitalRead(PIN_BTN_SET) == LOW);
+  state.btnTrimPlus = (digitalRead(PIN_BTN_TRIM_PLUS) == LOW);
+  state.btnTrimMinus = (digitalRead(PIN_BTN_TRIM_MINUS) == LOW);
+
+  state.gyroOn = (digitalRead(PIN_SW_GYRO) == LOW) || state.gyroOverride;
+
+  float steerPct = (static_cast<int>(state.rawSteer) - 2048 + STEER_CENTER_FIX) / 20.48f;
+  float throttlePct = (static_cast<int>(state.rawThrottle) - 2048 + THROT_CENTER_FIX) / 20.48f;
+  steerPct += state.steerTrim;
+  throttlePct += state.throttleTrim;
+
+  if (fabsf(steerPct) < state.steerDeadzone) steerPct = 0.0f;
+  if (fabsf(throttlePct) < state.throttleDeadzone) throttlePct = 0.0f;
+
+  state.steerPct = constrain(steerPct, -100.0f, 100.0f);
+  state.throttlePct = constrain(throttlePct, -100.0f, 100.0f);
+  state.suspensionPct = constrain(state.rawSuspension / 40.95f, 0.0f, 100.0f);
+}
+
+static void updateTelemetry(uint32_t nowMs) {
+  float dt = (nowMs - lastSimMs) / 1000.0f;
+  if (dt <= 0.0f) return;
+  lastSimMs = nowMs;
+
+  float throttleAbs = fabsf(state.throttlePct);
+  float targetSpeed = (state.throttlePct > 0.0f) ? (state.throttlePct * 1.2f) : 0.0f;
+  state.speedKmh += (targetSpeed - state.speedKmh) * (dt * 2.0f);
+  state.speedKmh = constrain(state.speedKmh, 0.0f, 120.0f);
+
+  state.rpmEstimate = throttleAbs * 50.0f;
+  state.currentA = throttleAbs * 0.6f;
+
+  float tempTarget = 30.0f + throttleAbs * 0.6f;
+  state.tempMotor += (tempTarget - state.tempMotor) * (dt * 0.8f);
+  state.tempEsc += (tempTarget - 4.0f - state.tempEsc) * (dt * 0.6f);
+  state.tempBoard += (28.0f - state.tempBoard) * (dt * 0.2f) + throttleAbs * 0.01f;
+
+  float wave = (sinf(nowMs / 4000.0f) + 1.0f) * 0.5f;
+  state.signalStrength = 88.0f + (wave * 12.0f);
+  state.rxConnected = state.signalStrength > 20.0f;
+
+  state.txVoltage = 8.2f - (throttleAbs / 100.0f) * 0.3f;
+  state.rxVoltage = 7.4f - (throttleAbs / 100.0f) * 0.2f;
+
+  if (nowMs - lastDriveMs >= 1000) {
+    lastDriveMs = nowMs;
+    state.driveTimeSec += 1;
+  }
 }
 
 void setup() {
-    Serial.begin(115200);
-    
-    // 1. Hardware Init
-    input.init();
-    sound.init();
+  Serial.begin(SERIAL_BAUD);
 
-    // 2. Preferences
-    prefs.begin("tx-cfg", false);
-    state.steerTrim = prefs.getInt("trim_s", 0);
+  analogReadResolution(12);
+  pinMode(PIN_STEERING, INPUT);
+  pinMode(PIN_THROTTLE, INPUT);
+  pinMode(PIN_POT_SUSPENSION, INPUT);
+  pinMode(PIN_SW_GYRO, INPUT_PULLUP);
 
-    // 3. Pin Setup (Analog/Direct)
-    pinMode(PIN_STEERING, INPUT);
-    pinMode(PIN_THROTTLE, INPUT);
-    pinMode(PIN_POT_SUSPENSION, INPUT);
-    pinMode(PIN_SW_GYRO, INPUT_PULLUP);
+  palette.begin();
+  input.begin();
+  buzzer.begin();
+  ui.begin();
 
-    // 4. Display Setup
-    tft.init();
-    tft.setRotation(0);
-    tft.setSwapBytes(true); 
-    
-    if (!sprite.createSprite(128, 160)) {
-        Serial.println("Memory Allocation Failed!");
-        while(1);
-    }
-    
-    tft.fillScreen(TFT_BLACK);
-    
-    // 5. Ready Sound
-    sound.playStartup();
+  prefs.begin("tx-cfg", false);
+  state.steerTrim = prefs.getInt("trim_s", 0);
+  state.throttleTrim = prefs.getInt("trim_t", 0);
+
+  if (!PanelIO::begin()) {
+    Serial.println("Display init failed");
+    while (true) { delay(100); }
+  }
+
+  allocateBuffers();
+  renderer.setBuffer(backBuffer, kWidth, kHeight, &palette);
+
+  lastFrameMs = millis();
+  lastFpsMs = millis();
+  lastSimMs = millis();
+  lastDriveMs = millis();
 }
 
 void loop() {
-    // 1. Read Inputs
-    int sRaw = analogRead(PIN_STEERING) + STEER_CENTER_FIX;
-    int tRaw = analogRead(PIN_THROTTLE) + THROT_CENTER_FIX;
-    state.rawSuspension = analogRead(PIN_POT_SUSPENSION);
-    
-    // 2. Normalize
-    float tPct = (tRaw - 2048) / 20.48f;
-    float sPct = (sRaw - 2048) / 20.48f + state.steerTrim;
-    
-    // Deadzone
-    if (abs(tPct) < 5.0) tPct = 0;
-    if (abs(sPct) < 2.0) sPct = 0;
+  uint32_t nowMs = millis();
+  uint32_t frameStartUs = micros();
 
-    state.steerPct = constrain(sPct, -100, 100);
-    state.throttlePct = constrain(tPct, -100, 100);
-    state.swGyro = (digitalRead(PIN_SW_GYRO) == LOW);
-    
-    // Simulate Speed
-    if (state.throttlePct > 0) state.speedKmh += 0.5;
-    else state.speedKmh -= 0.5;
-    if (state.throttlePct == 0) state.speedKmh *= 0.95;
-    state.speedKmh = constrain(state.speedKmh, 0, 120);
-    
-    // 3. Logic & Draw
-    handleNavigation();
-    sound.update(); // Update Audio Loop
-    drawScreens();
-    
-    // 4. Push to Screen
-    sprite.pushSprite(0, 0);
-    delay(5); 
+  InputActions actions = input.update();
+  updateSensors();
+  updateTelemetry(nowMs);
+  ui.handleInput(actions, state);
+
+  if (nowMs - lastFrameMs >= 33) {
+    lastFrameMs = nowMs;
+
+    renderer.setBuffer(backBuffer, kWidth, kHeight, &palette);
+    ui.draw(renderer, state);
+    flushDirtyTiles();
+
+    uint16_t *tmp = frontBuffer;
+    frontBuffer = backBuffer;
+    backBuffer = tmp;
+
+    frameCount++;
+    if (nowMs - lastFpsMs >= 1000) {
+      state.fps = frameCount;
+      frameCount = 0;
+      lastFpsMs = nowMs;
+    }
+  }
+
+  state.loopTimeUs = micros() - frameStartUs;
+  state.memFree = ESP.getFreeHeap();
+  state.cpuLoad = static_cast<uint8_t>(constrain(state.loopTimeUs / 1000, 0, 100));
+
+  buzzer.update(state);
 }

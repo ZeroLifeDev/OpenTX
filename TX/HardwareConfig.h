@@ -35,6 +35,10 @@
 #define PIN_TFT_DC   25
 #define PIN_TFT_RST   4
 
+// TFT Orientation (MADCTL)
+// 0x08 = portrait, 0xC8 = portrait flipped 180, 0x48 = mirror X, 0x88 = mirror Y
+#define TFT_MADCTL 0xC8
+
 // Status LED
 #define PIN_LED_BUILTIN 2
 

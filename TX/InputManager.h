@@ -1,93 +1,59 @@
-#ifndef INPUT_MANAGER_H
-#define INPUT_MANAGER_H
+#pragma once
 
 #include <Arduino.h>
-#include "Sound.h" // Access to sound for clicks
+#include "HardwareConfig.h"
 
-// --- PIN DEFINITIONS (Fallbacks) ---
-#ifndef PIN_BTN_TRIM_PLUS
-  #define PIN_BTN_TRIM_PLUS 18
-#endif
-#ifndef PIN_BTN_TRIM_MINUS
-  #define PIN_BTN_TRIM_MINUS 19
-#endif
-#ifndef PIN_BTN_MENU
-  #define PIN_BTN_MENU 23
-#endif
-#ifndef PIN_BTN_SET
-  #define PIN_BTN_SET 25 // Default Set Pin
-#endif
-
-class InputManager {
-private:
-    unsigned long btnPressTime = 0;
-    bool lastMenuState = true; 
-    bool lastSetState = true;
-    bool lastUpState = true;
-    bool lastDownState = true;
-    
-public:
-    // Navigation Events
-    bool navUp = false;
-    bool navDown = false;
-    bool navSet = false; // "Select" / Enter
-    bool navBack = false; // "Back" / Exit
-    bool navHome = false; // Long Press Menu
-
-    void init() {
-         pinMode(PIN_BTN_TRIM_PLUS, INPUT_PULLUP);
-         pinMode(PIN_BTN_TRIM_MINUS, INPUT_PULLUP);
-         pinMode(PIN_BTN_MENU, INPUT_PULLUP);
-         pinMode(PIN_BTN_SET, INPUT_PULLUP);
-    }
-
-    void update() {
-        // Reset One-Shot Events
-        navUp = false; navDown = false; navSet = false; navBack = false; navHome = false;
-        
-        // 1. MENU BUTTON (BACK / HOME)
-        bool currMenu = digitalRead(PIN_BTN_MENU);
-        if (lastMenuState && !currMenu) { // Press
-            btnPressTime = millis();
-        }
-        if (!lastMenuState && currMenu) { // Release
-            unsigned long dur = millis() - btnPressTime;
-            if (dur < 800) {
-                navBack = true; // Short = Back
-                sound.playBack();
-            } else {
-                navHome = true; // Long = Home
-                sound.playBack();
-            }
-        }
-        lastMenuState = currMenu;
-
-        // 2. SET BUTTON (SELECT)
-        bool currSet = digitalRead(PIN_BTN_SET);
-        if (lastSetState && !currSet) {
-             navSet = true;
-             sound.playSelect();
-        }
-        lastSetState = currSet;
-        
-        // 3. TRIM TRANSITIONS (SCROLL)
-        bool currUp = digitalRead(PIN_BTN_TRIM_PLUS);
-        bool currDown = digitalRead(PIN_BTN_TRIM_MINUS);
-        
-        if (lastUpState && !currUp) {
-             navUp = true;
-             sound.playScroll();
-        }
-        if (lastDownState && !currDown) {
-             navDown = true;
-             sound.playScroll();
-        }
-        
-        lastUpState = currUp;
-        lastDownState = currDown;
-    }
+struct InputActions {
+  bool menuShort = false;
+  bool menuLong = false;
+  bool setShort = false;
+  bool setLong = false;
+  bool setDouble = false;
+  int8_t trimDelta = 0;
 };
 
-static InputManager input; // Global instance
+class InputManager {
+public:
+  void begin();
+  InputActions update();
 
-#endif
+private:
+  struct ButtonState {
+    uint8_t pin = 0;
+    bool activeLow = true;
+    bool stableState = false;
+    bool lastStable = false;
+    uint32_t lastChangeMs = 0;
+    uint32_t pressedAtMs = 0;
+    uint32_t lastReleaseMs = 0;
+    uint8_t clickCount = 0;
+    bool longFired = false;
+  };
+
+  struct RepeatState {
+    uint32_t pressedAtMs = 0;
+    uint32_t lastRepeatMs = 0;
+    bool pressed = false;
+  };
+
+  ButtonState menuBtn;
+  ButtonState setBtn;
+  ButtonState trimPlus;
+  ButtonState trimMinus;
+
+  RepeatState trimPlusRepeat;
+  RepeatState trimMinusRepeat;
+
+  void initButton(ButtonState &btn, uint8_t pin);
+  bool readButton(const ButtonState &btn) const;
+  void updateButton(ButtonState &btn);
+  void handleClicks(ButtonState &btn, bool &shortPress, bool &longPress, bool &doublePress);
+  int8_t handleTrimRepeat(ButtonState &btn, RepeatState &rep, int8_t direction);
+
+  static const uint16_t kDebounceMs = 20;
+  static const uint16_t kLongPressMs = 650;
+  static const uint16_t kDoublePressMs = 350;
+  static const uint16_t kRepeatDelayMs = 280;
+  static const uint16_t kRepeatFastMs = 90;
+  static const uint16_t kAccelMs = 800;
+};
