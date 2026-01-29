@@ -6,7 +6,15 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <Preferences.h>
+#include <driver/spi_master.h>
+#include <esp_idf_version.h>
+#include <esp_heap_caps.h>
 #include "HardwareConfig.h"
+#include "TxTypes.h"
+#include "OpenTX_Font8x16.h"
+#include "OpenTX_AdvMenu.h"
+
+struct RateExpo;
 
 // --------------------------
 // Build-time configuration
@@ -18,7 +26,6 @@
 #define TFT_X_OFFSET 0
 #define TFT_Y_OFFSET 0
 
-#define USE_HW_SPI 0        // 0 = bit-bang SPI (no SPI library), 1 = HW SPI (needs SPI.h)
 #define SW_GYRO_ACTIVE_LOW 1
 
 // ESP-NOW settings
@@ -26,11 +33,16 @@ static const uint8_t ESPNOW_CHANNEL = 1;
 static const uint8_t ESPNOW_BROADCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
 // UI timing
-static const uint32_t UI_FRAME_MS = 33;   // ~30 FPS
+static const uint32_t UI_FRAME_MS = 16;   // ~60 FPS
 static const uint32_t SEND_MIN_MS = 20;   // 50 Hz base
 
 // Buzzer
 static const uint8_t BUZZER_CH = 0;
+
+static const uint8_t CFG_VERSION = 2;
+static const uint8_t MAX_PEERS = 5;
+static const uint32_t PAIR_LISTEN_MS = 12000;
+static const uint8_t MAX_PROFILES = 6;
 
 // --------------------------
 // Helpers
@@ -42,7 +54,18 @@ static inline int clampi(int v, int lo, int hi) {
 }
 
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
-  return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+  uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+  return (uint16_t)((c << 8) | (c >> 8)); // swap for DMA byte order
+}
+
+static inline float lerpf(float a, float b, float t) {
+  return a + (b - a) * t;
+}
+
+static int applyExpo(int v, uint8_t expo);
+static inline bool macEqual(const uint8_t *a, const uint8_t *b) {
+  for (int i = 0; i < 6; i++) if (a[i] != b[i]) return false;
+  return true;
 }
 
 // --------------------------
@@ -51,15 +74,26 @@ static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
 class TFTILI9163 {
 public:
   void begin() {
-    pinMode(PIN_TFT_CS, OUTPUT);
     pinMode(PIN_TFT_DC, OUTPUT);
     pinMode(PIN_TFT_RST, OUTPUT);
-    pinMode(PIN_TFT_SCLK, OUTPUT);
-    pinMode(PIN_TFT_MOSI, OUTPUT);
 
-    digitalWrite(PIN_TFT_CS, HIGH);
-    digitalWrite(PIN_TFT_SCLK, LOW);
-    digitalWrite(PIN_TFT_MOSI, LOW);
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num = PIN_TFT_MOSI;
+    buscfg.miso_io_num = -1;
+    buscfg.sclk_io_num = PIN_TFT_SCLK;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = 4096 + 8;
+
+    spi_device_interface_config_t devcfg = {};
+    devcfg.clock_speed_hz = 40000000;
+    devcfg.mode = 0;
+    devcfg.spics_io_num = PIN_TFT_CS;
+    devcfg.queue_size = 1;
+    devcfg.flags = SPI_DEVICE_HALFDUPLEX;
+
+    spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    spi_bus_add_device(SPI2_HOST, &devcfg, &spi);
 
     // Reset
     digitalWrite(PIN_TFT_RST, LOW);
@@ -111,6 +145,11 @@ public:
 
     writeCommand(0x29); // DISPON
     delay(10);
+
+    fb = (uint16_t *)heap_caps_malloc(TFT_W * TFT_H * 2, MALLOC_CAP_DMA);
+    if (!fb) {
+      fb = (uint16_t *)malloc(TFT_W * TFT_H * 2);
+    }
   }
 
   void setRotation(uint8_t r) {
@@ -128,31 +167,37 @@ public:
   }
 
   void fillScreen(uint16_t c) {
+    if (!fb) return;
     fillRect(0, 0, TFT_W, TFT_H, c);
   }
 
   void drawPixel(int x, int y, uint16_t c) {
+    if (!fb) return;
     if (x < 0 || y < 0 || x >= TFT_W || y >= TFT_H) return;
-    setAddrWindow(x, y, x, y);
-    pushColor(c, 1);
+    fb[y * TFT_W + x] = c;
   }
 
   void drawFastHLine(int x, int y, int w, uint16_t c) {
+    if (!fb) return;
     if (y < 0 || y >= TFT_H || w <= 0) return;
     if (x < 0) { w += x; x = 0; }
     if (x + w > TFT_W) w = TFT_W - x;
     if (w <= 0) return;
-    setAddrWindow(x, y, x + w - 1, y);
-    pushColor(c, w);
+    uint16_t *p = fb + y * TFT_W + x;
+    for (int i = 0; i < w; i++) p[i] = c;
   }
 
   void drawFastVLine(int x, int y, int h, uint16_t c) {
+    if (!fb) return;
     if (x < 0 || x >= TFT_W || h <= 0) return;
     if (y < 0) { h += y; y = 0; }
     if (y + h > TFT_H) h = TFT_H - y;
     if (h <= 0) return;
-    setAddrWindow(x, y, x, y + h - 1);
-    pushColor(c, h);
+    uint16_t *p = fb + y * TFT_W + x;
+    for (int i = 0; i < h; i++) {
+      *p = c;
+      p += TFT_W;
+    }
   }
 
   void drawRect(int x, int y, int w, int h, uint16_t c) {
@@ -163,14 +208,17 @@ public:
   }
 
   void fillRect(int x, int y, int w, int h, uint16_t c) {
+    if (!fb) return;
     if (w <= 0 || h <= 0) return;
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
     if (x + w > TFT_W) w = TFT_W - x;
     if (y + h > TFT_H) h = TFT_H - y;
     if (w <= 0 || h <= 0) return;
-    setAddrWindow(x, y, x + w - 1, y + h - 1);
-    pushColor(c, (uint32_t)w * (uint32_t)h);
+    for (int yy = 0; yy < h; yy++) {
+      uint16_t *p = fb + (y + yy) * TFT_W + x;
+      for (int xx = 0; xx < w; xx++) p[xx] = c;
+    }
   }
 
   void drawLine(int x0, int y0, int x1, int y1, uint16_t c) {
@@ -188,35 +236,30 @@ public:
 
   void drawChar(int x, int y, char ch, uint16_t color, uint16_t bg, uint8_t size);
   void drawText(int x, int y, const char *s, uint16_t color, uint16_t bg, uint8_t size);
+  void present();
 
 private:
+  spi_device_handle_t spi = nullptr;
+  uint16_t *fb = nullptr;
   uint8_t rotation = 0;
 
-  void csLow() { digitalWrite(PIN_TFT_CS, LOW); }
-  void csHigh() { digitalWrite(PIN_TFT_CS, HIGH); }
   void dcLow() { digitalWrite(PIN_TFT_DC, LOW); }
   void dcHigh() { digitalWrite(PIN_TFT_DC, HIGH); }
 
   void writeCommand(uint8_t c) {
-    csLow();
     dcLow();
-    spiWrite(c);
-    csHigh();
+    spiWriteBytes(&c, 1);
   }
 
   void writeData(uint8_t d) {
-    csLow();
     dcHigh();
-    spiWrite(d);
-    csHigh();
+    spiWriteBytes(&d, 1);
   }
 
   void writeData16(uint16_t d) {
-    csLow();
+    uint8_t b[2] = { (uint8_t)(d >> 8), (uint8_t)(d & 0xFF) };
     dcHigh();
-    spiWrite(d >> 8);
-    spiWrite(d & 0xFF);
-    csHigh();
+    spiWriteBytes(b, 2);
   }
 
   void setAddrWindow(int x0, int y0, int x1, int y1) {
@@ -225,35 +268,38 @@ private:
     y0 += TFT_Y_OFFSET;
     y1 += TFT_Y_OFFSET;
     writeCommand(0x2A);
-    csLow(); dcHigh();
-    spiWrite(x0 >> 8); spiWrite(x0 & 0xFF);
-    spiWrite(x1 >> 8); spiWrite(x1 & 0xFF);
-    csHigh();
+    uint8_t colData[4] = { (uint8_t)(x0 >> 8), (uint8_t)(x0 & 0xFF),
+                           (uint8_t)(x1 >> 8), (uint8_t)(x1 & 0xFF) };
+    dcHigh();
+    spiWriteBytes(colData, 4);
     writeCommand(0x2B);
-    csLow(); dcHigh();
-    spiWrite(y0 >> 8); spiWrite(y0 & 0xFF);
-    spiWrite(y1 >> 8); spiWrite(y1 & 0xFF);
-    csHigh();
+    uint8_t rowData[4] = { (uint8_t)(y0 >> 8), (uint8_t)(y0 & 0xFF),
+                           (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF) };
+    dcHigh();
+    spiWriteBytes(rowData, 4);
     writeCommand(0x2C);
   }
 
-  void pushColor(uint16_t color, uint32_t count) {
-    csLow(); dcHigh();
-    uint8_t hi = color >> 8;
-    uint8_t lo = color & 0xFF;
-    while (count--) {
-      spiWrite(hi);
-      spiWrite(lo);
-    }
-    csHigh();
+  void spiWriteBytes(const uint8_t *data, size_t len) {
+    if (!spi || !data || len == 0) return;
+    spi_transaction_t t = {};
+    t.length = len * 8;
+    t.tx_buffer = data;
+    spi_device_polling_transmit(spi, &t);
   }
 
-  void spiWrite(uint8_t data) {
-    for (uint8_t i = 0; i < 8; i++) {
-      digitalWrite(PIN_TFT_SCLK, LOW);
-      digitalWrite(PIN_TFT_MOSI, (data & 0x80) ? HIGH : LOW);
-      digitalWrite(PIN_TFT_SCLK, HIGH);
-      data <<= 1;
+  void pushPixelsDMA(const uint8_t *data, size_t len) {
+    if (!spi || !data || len == 0) return;
+    const size_t chunk = 4096;
+    while (len) {
+      size_t n = (len > chunk) ? chunk : len;
+      spi_transaction_t t = {};
+      t.length = n * 8;
+      t.tx_buffer = data;
+      dcHigh();
+      spi_device_polling_transmit(spi, &t);
+      data += n;
+      len -= n;
     }
   }
 };
@@ -315,60 +361,152 @@ void TFTILI9163::drawText(int x, int y, const char *s, uint16_t color, uint16_t 
   }
 }
 
+static void drawChar8x16(int x, int y, char ch, uint16_t color, uint16_t bg, uint8_t scale) {
+  uint8_t c = (uint8_t)ch;
+  for (int row = 0; row < 16; row++) {
+    uint8_t bits = pgm_read_byte(&font8x16[c][row]);
+    for (int col = 0; col < 8; col++) {
+      uint16_t px = (bits & (1 << (7 - col))) ? color : bg;
+      if (scale == 1) {
+        tft.drawPixel(x + col, y + row, px);
+      } else {
+        tft.fillRect(x + col * scale, y + row * scale, scale, scale, px);
+      }
+    }
+  }
+}
+
+static void drawText8x16(int x, int y, const char *s, uint16_t color, uint16_t bg, uint8_t scale) {
+  while (*s) {
+    drawChar8x16(x, y, *s, color, bg, scale);
+    x += (8 * scale);
+    s++;
+  }
+}
+
+void TFTILI9163::present() {
+  if (!fb) return;
+  setAddrWindow(0, 0, TFT_W - 1, TFT_H - 1);
+  pushPixelsDMA((const uint8_t *)fb, TFT_W * TFT_H * 2);
+}
+
 // --------------------------
 // Inputs & Config
 // --------------------------
-struct AxisCal {
-  int16_t min;
-  int16_t center;
-  int16_t max;
-};
-
-struct TxConfig {
-  AxisCal steer;
-  AxisCal throttle;
-  AxisCal susp;
-  int16_t trimSteer;
-  int16_t trimThrot;
-  uint8_t driveMode;    // 0..2
-  uint8_t expoSteer;    // 0..100
-  uint8_t expoThrot;    // 0..100
-  uint8_t rateSteer;    // 50..100
-  uint8_t rateThrot;    // 50..100
-  uint8_t sendHz;       // 20..60
-  uint8_t invertSteer;  // 0/1
-  uint8_t invertThrot;  // 0/1
-};
-
 TxConfig cfg;
 Preferences prefs;
-
-struct AxisState {
-  int raw = 0;
-  float smooth = 0.0f;
-  int value = 0;
-};
-
 AxisState steerAxis, throtAxis, suspAxis;
+
+struct PeerEntry {
+  uint8_t mac[6];
+  uint8_t valid;
+};
+static PeerEntry peers[MAX_PEERS];
+static uint8_t activePeer = 0;
+static bool pairingActive = false;
+static uint32_t pairingUntil = 0;
+static uint8_t lastPairMac[6] = {0};
+
+static int findPeer(const uint8_t *mac) {
+  for (int i = 0; i < MAX_PEERS; i++) {
+    if (peers[i].valid && macEqual(peers[i].mac, mac)) return i;
+  }
+  return -1;
+}
+
+static int firstFreePeer() {
+  for (int i = 0; i < MAX_PEERS; i++) {
+    if (!peers[i].valid) return i;
+  }
+  return -1;
+}
+
+struct TelemetryState {
+  uint16_t speedKmh = 0;
+  int8_t rssi = -127;
+  uint32_t lastMs = 0;
+  bool valid = false;
+};
+static TelemetryState telemetry;
+
+struct TelemetryPacket {
+  uint16_t magic;
+  uint8_t version;
+  uint8_t flags;
+  uint16_t speedKmh;
+  int8_t rssi;
+  uint8_t reserved;
+};
+static const uint16_t TEL_MAGIC = 0xBEEF;
+
+struct ModelProfile {
+  char name[12];
+  TxConfig cfg;
+};
+static ModelProfile profiles[MAX_PROFILES];
+static uint8_t activeProfile = 0;
+
+static ModelConfig model;
+
+struct ChannelOutput {
+  int16_t value;
+};
+static ChannelOutput channels[4];
+
+struct TimerState {
+  uint32_t totalMs = 0;
+  uint32_t lastUpdate = 0;
+  bool running = false;
+};
+static TimerState driveTimer;
+static TimerState sessionTimer;
+
+struct EventLogItem {
+  uint32_t ms;
+  uint8_t code;
+  int16_t data;
+};
+static EventLogItem eventLog[20];
+static uint8_t eventHead = 0;
+
+static inline int16_t applyRateExpo(int16_t v, const RateExpo &re) {
+  int16_t out = v;
+  if (re.reverse) out = -out;
+  out = applyExpo(out, re.expo);
+  out = (int16_t)((int32_t)out * re.rate / 100);
+  out = clampi(out + re.subtrim, -1000, 1000);
+  int16_t minv = re.min ? re.min : -1000;
+  int16_t maxv = re.max ? re.max : 1000;
+  return clampi(out, minv, maxv);
+}
+
+static void initModelDefaults() {
+  model.steer = { 90, 35, 0, -1000, 1000, 0 };
+  model.throttle = { 90, 30, 0, -1000, 1000, 0 };
+  model.aux = { 80, 20, 0, -1000, 1000, 0 };
+  for (int i = 0; i < 3; i++) {
+    for (int p = 0; p < 9; p++) model.curves[i].points[p] = (int8_t)(-100 + p * 25);
+  }
+  model.failsafeSteer = 128;
+  model.failsafeThrot = 128;
+  model.mixSteerToAux = 0;
+  model.mixThrotToAux = 0;
+  model.chMap[0] = 0;
+  model.chMap[1] = 1;
+  model.chMap[2] = 2;
+  model.chMap[3] = 3;
+}
+
+static void logEvent(uint8_t code, int16_t data) {
+  eventLog[eventHead].ms = millis();
+  eventLog[eventHead].code = code;
+  eventLog[eventHead].data = data;
+  eventHead = (eventHead + 1) % 20;
+}
 
 // --------------------------
 // ESP-NOW Packet
 // --------------------------
-struct ControlPacket {
-  uint16_t magic;
-  uint8_t version;
-  uint8_t seq;
-  uint32_t ms;
-  int16_t steer;
-  int16_t throttle;
-  int16_t suspension;
-  int16_t trimSteer;
-  int16_t trimThrot;
-  uint8_t driveMode;
-  uint8_t flags;
-  uint8_t checksum;
-};
-
 static uint8_t txSeq = 0;
 static bool lastSendOk = false;
 static uint32_t lastAckMs = 0;
@@ -430,7 +568,27 @@ Button btnMenu, btnSet, btnTrimPlus, btnTrimMinus;
 // --------------------------
 // UI State
 // --------------------------
-enum ScreenId { SCREEN_HOME = 0, SCREEN_MENU = 1, SCREEN_CAL = 2 };
+enum ScreenId {
+  SCREEN_HOME = 0,
+  SCREEN_MENU = 1,
+  SCREEN_SETTINGS = 2,
+  SCREEN_PAIR = 3,
+  SCREEN_PROFILES = 4,
+  SCREEN_TELEMETRY = 5,
+  SCREEN_MODEL = 6,
+  SCREEN_RATES = 7,
+  SCREEN_OUTPUTS = 8,
+  SCREEN_CURVES = 9,
+  SCREEN_TIMERS = 10,
+  SCREEN_DIAG = 11,
+  SCREEN_LOG = 12,
+  SCREEN_ADV = 13,
+  SCREEN_MIXER = 14,
+  SCREEN_NAME = 15,
+  SCREEN_CHMAP = 16,
+  SCREEN_CAL = 17,
+  SCREEN_INFO = 18
+};
 static ScreenId screen = SCREEN_HOME;
 static uint32_t lastFrameMs = 0;
 static bool uiDirty = true;
@@ -440,6 +598,11 @@ static int lastThrotUI = 0;
 static int lastSuspUI = 0;
 static bool lastConnUI = false;
 static uint8_t lastModeUI = 255;
+static float uiSteer = 0.0f;
+static float uiThrot = 0.0f;
+static float uiSusp = 0.0f;
+static float uiSpeed = 0.0f;
+static uint32_t lastTelemMs = 0;
 
 // Calibration state
 enum CalStep { CAL_NONE, CAL_CENTER, CAL_STEER_SWEEP, CAL_THROT_SWEEP, CAL_SUSP_SWEEP, CAL_DONE };
@@ -449,13 +612,54 @@ static int calMin = 4095, calMax = 0;
 // --------------------------
 // Colors
 // --------------------------
-static const uint16_t C_BG = rgb565(10, 18, 28);
-static const uint16_t C_PANEL = rgb565(20, 30, 46);
-static const uint16_t C_ACCENT = rgb565(255, 140, 40);
-static const uint16_t C_ACCENT2 = rgb565(60, 200, 160);
-static const uint16_t C_TEXT = rgb565(230, 235, 240);
-static const uint16_t C_DIM = rgb565(140, 150, 160);
-static const uint16_t C_WARN = rgb565(255, 60, 60);
+static const uint16_t C_BG_TOP = rgb565(6, 10, 16);
+static const uint16_t C_BG_BOT = rgb565(16, 24, 36);
+static const uint16_t C_PANEL = rgb565(14, 20, 30);
+static const uint16_t C_PANEL2 = rgb565(18, 26, 38);
+static const uint16_t C_LINE = rgb565(38, 50, 68);
+static const uint16_t C_ACCENT = rgb565(0, 200, 170);
+static const uint16_t C_ACCENT2 = rgb565(255, 180, 70);
+static const uint16_t C_TEXT = rgb565(236, 240, 246);
+static const uint16_t C_MUTED = rgb565(130, 145, 165);
+static const uint16_t C_WARN = rgb565(255, 80, 80);
+
+static void advActionSave();
+static void advActionReset();
+static void advActionBeep();
+
+static const char *optDriveMode[] = { "ECO", "NORM", "SPORT" };
+static const char *optInvert[] = { "OFF", "ON" };
+static const char *optGyro[] = { "OFF", "ON" };
+
+static int16_t advDriveMode;
+static int16_t advInvertSteer;
+static int16_t advInvertThrot;
+static int16_t advSendHz;
+static int16_t advMaxKmh;
+static int16_t advSteerRate;
+static int16_t advThrotRate;
+static int16_t advSteerExpo;
+static int16_t advThrotExpo;
+static int16_t advSteerSub;
+static int16_t advThrotSub;
+
+static MenuItem advItems[] = {
+  { "DRIVE MODE", MENU_ENUM, &advDriveMode, 0, 2, 1, optDriveMode, 3, nullptr },
+  { "INV STEER", MENU_ENUM, &advInvertSteer, 0, 1, 1, optInvert, 2, nullptr },
+  { "INV THROT", MENU_ENUM, &advInvertThrot, 0, 1, 1, optInvert, 2, nullptr },
+  { "SEND HZ", MENU_INT, &advSendHz, 20, 60, 1, nullptr, 0, nullptr },
+  { "MAX KMH", MENU_INT, &advMaxKmh, 1, 200, 1, nullptr, 0, nullptr },
+  { "STEER RATE", MENU_INT, &advSteerRate, 50, 120, 2, nullptr, 0, nullptr },
+  { "THROT RATE", MENU_INT, &advThrotRate, 50, 120, 2, nullptr, 0, nullptr },
+  { "STEER EXPO", MENU_INT, &advSteerExpo, 0, 100, 2, nullptr, 0, nullptr },
+  { "THROT EXPO", MENU_INT, &advThrotExpo, 0, 100, 2, nullptr, 0, nullptr },
+  { "STEER SUB", MENU_INT, &advSteerSub, -200, 200, 2, nullptr, 0, nullptr },
+  { "THROT SUB", MENU_INT, &advThrotSub, -200, 200, 2, nullptr, 0, nullptr },
+  { "SAVE", MENU_ACTION, nullptr, 0, 0, 0, nullptr, 0, advActionSave },
+  { "RESET", MENU_ACTION, nullptr, 0, 0, 0, nullptr, 0, advActionReset },
+  { "BEEP TEST", MENU_ACTION, nullptr, 0, 0, 0, nullptr, 0, advActionBeep },
+};
+static MenuPage advPage = { "ADVANCED", advItems, (uint8_t)(sizeof(advItems) / sizeof(advItems[0])) };
 
 // --------------------------
 // Buzzer
@@ -465,24 +669,28 @@ static bool buzzerOn = false;
 
 static void buzzerBegin() {
   if (PIN_BUZZER >= 0) {
-    ledcSetup(BUZZER_CH, 2000, 8);
-    ledcAttachPin(PIN_BUZZER, BUZZER_CH);
-    ledcWriteTone(BUZZER_CH, 0);
+    pinMode(PIN_BUZZER, OUTPUT);
+    noTone(PIN_BUZZER);
   }
 }
+
+static void buzzerClick() { buzzerBeep(2200, 20); }
+static void buzzerSelect() { buzzerBeep(2600, 35); }
+static void buzzerBack() { buzzerBeep(1800, 25); }
+static void buzzerAlert() { buzzerBeep(3200, 60); }
 
 static void buzzerBeep(uint16_t freq, uint16_t ms) {
   if (PIN_BUZZER < 0) return;
   buzzerOn = true;
   buzzerUntil = millis() + ms;
-  ledcWriteTone(BUZZER_CH, freq);
+  tone(PIN_BUZZER, freq);
 }
 
 static void buzzerUpdate() {
   if (!buzzerOn) return;
   if ((int32_t)(millis() - buzzerUntil) >= 0) {
     buzzerOn = false;
-    ledcWriteTone(BUZZER_CH, 0);
+    noTone(PIN_BUZZER);
   }
 }
 
@@ -490,6 +698,7 @@ static void buzzerUpdate() {
 // Config storage
 // --------------------------
 static void loadDefaults() {
+  cfg.ver = CFG_VERSION;
   cfg.steer = {500, JOY_CENTER, 3500};
   cfg.throttle = {500, JOY_CENTER, 3500};
   cfg.susp = {500, 2048, 3500};
@@ -503,22 +712,94 @@ static void loadDefaults() {
   cfg.sendHz = 50;
   cfg.invertSteer = 0;
   cfg.invertThrot = 0;
+  cfg.maxKmh = 45;
 }
 
 static void loadConfig() {
   loadDefaults();
   prefs.begin("txcfg", true);
-  if (prefs.getBool("ok", false)) {
+  uint8_t ver = prefs.getUChar("ver", 0);
+  if (ver == CFG_VERSION) {
     prefs.getBytes("cfg", &cfg, sizeof(cfg));
+  }
+  prefs.end();
+
+  prefs.begin("txpeer", true);
+  size_t got = prefs.getBytesLength("peers");
+  if (got == sizeof(peers)) {
+    prefs.getBytes("peers", peers, sizeof(peers));
+  } else {
+    memset(peers, 0, sizeof(peers));
+  }
+  activePeer = prefs.getUChar("active", 0);
+  if (activePeer >= MAX_PEERS) activePeer = 0;
+  prefs.end();
+
+  prefs.begin("txprof", true);
+  size_t gotp = prefs.getBytesLength("profiles");
+  if (gotp == sizeof(profiles)) {
+    prefs.getBytes("profiles", profiles, sizeof(profiles));
+  } else {
+    const char *names[MAX_PROFILES] = { "Street", "Trail", "Race", "Crawl", "Bash", "Spare" };
+    for (int i = 0; i < MAX_PROFILES; i++) {
+      memset(&profiles[i], 0, sizeof(ModelProfile));
+      strncpy(profiles[i].name, names[i], sizeof(profiles[i].name) - 1);
+      profiles[i].cfg = cfg;
+    }
+  }
+  activeProfile = prefs.getUChar("active", 0);
+  if (activeProfile >= MAX_PROFILES) activeProfile = 0;
+  prefs.end();
+
+  prefs.begin("txmodel", true);
+  size_t gotm = prefs.getBytesLength("model");
+  if (gotm == sizeof(model)) {
+    prefs.getBytes("model", &model, sizeof(model));
+  } else {
+    initModelDefaults();
   }
   prefs.end();
 }
 
 static void saveConfig() {
   prefs.begin("txcfg", false);
-  prefs.putBool("ok", true);
+  prefs.putUChar("ver", CFG_VERSION);
   prefs.putBytes("cfg", &cfg, sizeof(cfg));
   prefs.end();
+}
+
+static void savePeers() {
+  prefs.begin("txpeer", false);
+  prefs.putBytes("peers", peers, sizeof(peers));
+  prefs.putUChar("active", activePeer);
+  prefs.end();
+}
+
+static void saveProfiles() {
+  prefs.begin("txprof", false);
+  prefs.putBytes("profiles", profiles, sizeof(profiles));
+  prefs.putUChar("active", activeProfile);
+  prefs.end();
+}
+
+static void saveModel() {
+  prefs.begin("txmodel", false);
+  prefs.putBytes("model", &model, sizeof(model));
+  prefs.end();
+}
+
+static void loadProfile(uint8_t idx) {
+  if (idx >= MAX_PROFILES) return;
+  cfg = profiles[idx].cfg;
+  activeProfile = idx;
+  saveProfiles();
+  saveConfig();
+}
+
+static void saveProfile(uint8_t idx) {
+  if (idx >= MAX_PROFILES) return;
+  profiles[idx].cfg = cfg;
+  saveProfiles();
 }
 
 // --------------------------
@@ -575,6 +856,51 @@ void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   if (lastSendOk) lastAckMs = millis();
 }
 
+#if defined(ESP_IDF_VERSION_MAJOR) && (ESP_IDF_VERSION_MAJOR >= 5)
+void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  const uint8_t *mac_addr = info ? info->src_addr : nullptr;
+#else
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
+#endif
+  if (data && len >= (int)sizeof(TelemetryPacket)) {
+    TelemetryPacket pkt;
+    memcpy(&pkt, data, sizeof(TelemetryPacket));
+    if (pkt.magic == TEL_MAGIC) {
+      telemetry.speedKmh = pkt.speedKmh;
+      telemetry.rssi = pkt.rssi;
+      telemetry.lastMs = millis();
+      telemetry.valid = true;
+      logEvent(2, pkt.rssi);
+    }
+  }
+
+  if (!pairingActive || !mac_addr) return;
+  if (findPeer(mac_addr) >= 0) {
+    pairingActive = false;
+    return;
+  }
+  int slot = firstFreePeer();
+  if (slot < 0) return;
+  memcpy(peers[slot].mac, mac_addr, 6);
+  peers[slot].valid = 1;
+  activePeer = slot;
+  memcpy(lastPairMac, mac_addr, 6);
+  savePeers();
+  pairingActive = false;
+  buzzerSelect();
+  if (screen == SCREEN_PAIR) renderPairMenu();
+  logEvent(1, slot);
+}
+
+static void addEspNowPeer(const uint8_t *mac) {
+  if (!mac) return;
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, mac, 6);
+  peer.channel = ESPNOW_CHANNEL;
+  peer.encrypt = false;
+  esp_now_add_peer(&peer);
+}
+
 static void espnowInit() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
@@ -583,177 +909,240 @@ static void espnowInit() {
   esp_wifi_set_promiscuous(false);
 
   if (esp_now_init() != ESP_OK) {
-    buzzerBeep(200, 200);
+    buzzerAlert();
     return;
   }
   esp_now_register_send_cb(onDataSent);
+  esp_now_register_recv_cb(onDataRecv);
 
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, ESPNOW_BROADCAST, 6);
-  peer.channel = ESPNOW_CHANNEL;
-  peer.encrypt = false;
-  esp_now_add_peer(&peer);
+  addEspNowPeer(ESPNOW_BROADCAST);
+  for (int i = 0; i < MAX_PEERS; i++) {
+    if (peers[i].valid) addEspNowPeer(peers[i].mac);
+  }
 }
 
 // --------------------------
 // UI Rendering
 // --------------------------
-static void drawHeader() {
-  tft.fillRect(0, 0, TFT_W, 22, rgb565(12, 22, 34));
-  tft.drawText(6, 6, "RC TX", C_TEXT, 0xFFFF, 1);
-  tft.drawText(70, 6, "DMI", C_DIM, 0xFFFF, 1);
+static void drawBackground(uint32_t now) {
+  for (int y = 0; y < TFT_H; y++) {
+    uint8_t r = 6 + (uint8_t)((16 - 6) * y / (TFT_H - 1));
+    uint8_t g = 10 + (uint8_t)((24 - 10) * y / (TFT_H - 1));
+    uint8_t b = 16 + (uint8_t)((36 - 16) * y / (TFT_H - 1));
+    tft.drawFastHLine(0, y, TFT_W, rgb565(r, g, b));
+  }
+  int sweep = (now / 10) % (TFT_W + 40) - 40;
+  tft.fillRect(sweep, 18, 40, TFT_H - 18, C_PANEL2);
 }
 
-static void drawPanels() {
-  tft.fillRect(0, 22, TFT_W, TFT_H - 22, C_BG);
-  tft.fillRect(6, 28, 30, 100, C_PANEL);   // Throttle
-  tft.fillRect(42, 36, 80, 20, C_PANEL);   // Steering bar
-  tft.fillRect(42, 66, 80, 42, C_PANEL);   // Mode / Status
-  tft.fillRect(42, 114, 80, 14, C_PANEL);  // Suspension
-  tft.fillRect(6, 132, 116, 22, C_PANEL);  // Footer
-
-  tft.drawText(9, 30, "THR", C_DIM, 0xFFFF, 1);
-  tft.drawText(45, 38, "STEER", C_DIM, 0xFFFF, 1);
-  tft.drawText(45, 68, "MODE", C_DIM, 0xFFFF, 1);
-  tft.drawText(45, 116, "SUSP", C_DIM, 0xFFFF, 1);
+static void drawSignalBars(int x, int y, int bars, uint16_t col) {
+  for (int i = 0; i < 4; i++) {
+    int h = 2 + i * 2;
+    uint16_t c = (i < bars) ? col : C_LINE;
+    tft.fillRect(x + i * 4, y + (8 - h), 3, h, c);
+  }
 }
 
-static void drawConnection(bool ok) {
-  uint16_t col = ok ? C_ACCENT2 : C_WARN;
-  tft.fillRect(108, 4, 16, 14, rgb565(12, 22, 34));
-  tft.drawRect(108, 4, 16, 14, col);
-  tft.fillRect(111, 7, ok ? 10 : 4, 8, col);
+static void drawHeader(bool connected, bool gyroOn, uint32_t now) {
+  tft.fillRect(0, 0, TFT_W, 20, C_PANEL);
+  tft.drawText(6, 4, profiles[activeProfile].name, C_TEXT, 0xFFFF, 1);
+  tft.drawText(78, 4, gyroOn ? "GYRO" : "NO G", gyroOn ? C_ACCENT : C_MUTED, 0xFFFF, 1);
+
+  uint16_t col = connected ? C_ACCENT : C_WARN;
+  tft.drawRect(108, 3, 12, 12, col);
+  tft.fillRect(111, 6, 6, 6, col);
+
+  int bars = 0;
+  if (telemetry.valid && (millis() - telemetry.lastMs) < 800) {
+    int r = telemetry.rssi;
+    if (r > -60) bars = 4;
+    else if (r > -70) bars = 3;
+    else if (r > -80) bars = 2;
+    else if (r > -90) bars = 1;
+  }
+  drawSignalBars(64, 4, bars, C_ACCENT2);
+  tft.drawFastHLine(0, 20, TFT_W, C_LINE);
+}
+
+static void drawCard(int x, int y, int w, int h, const char *title) {
+  tft.fillRect(x, y, w, h, C_PANEL);
+  tft.drawRect(x, y, w, h, C_LINE);
+  tft.drawFastHLine(x + 1, y + 1, w - 2, C_PANEL2);
+  if (title) tft.drawText(x + 4, y + 3, title, C_MUTED, 0xFFFF, 1);
 }
 
 static void drawThrottle(int v) {
-  int top = 38;
-  int h = 92;
-  int mid = top + (h / 2);
-  tft.drawFastHLine(8, mid, 26, C_DIM);
-  tft.fillRect(8, top, 26, h, C_PANEL);
-  int bar = (v * (h / 2 - 2)) / 1000;
-  if (bar >= 0) {
-    tft.fillRect(8, mid - bar, 26, bar, C_ACCENT);
-  } else {
-    tft.fillRect(8, mid, 26, -bar, C_ACCENT2);
-  }
-  tft.drawRect(6, 28, 30, 100, C_DIM);
+  int x = 6, y = 28, w = 22, h = 108;
+  int top = y + 10;
+  int hh = h - 18;
+  int mid = top + (hh / 2);
+  tft.drawFastHLine(x + 3, mid, w - 6, C_LINE);
+  int bar = (v * (hh / 2 - 2)) / 1000;
+  if (bar >= 0) tft.fillRect(x + 3, mid - bar, w - 6, bar, C_ACCENT2);
+  else tft.fillRect(x + 3, mid, w - 6, -bar, C_ACCENT);
 }
 
 static void drawSteer(int v) {
-  int x = 44, y = 50, w = 76, h = 8;
-  tft.fillRect(x, y, w, h, C_PANEL);
-  tft.drawRect(42, 36, 80, 20, C_DIM);
-  int mid = x + w / 2;
-  tft.drawFastVLine(mid, y, h, C_DIM);
-  int dx = (v * (w / 2 - 2)) / 1000;
-  if (dx >= 0) {
-    tft.fillRect(mid, y + 1, dx, h - 2, C_ACCENT);
-  } else {
-    tft.fillRect(mid + dx, y + 1, -dx, h - 2, C_ACCENT2);
-  }
+  int x = 100, y = 28, w = 22, h = 108;
+  int top = y + 10;
+  int hh = h - 18;
+  int mid = top + (hh / 2);
+  tft.drawFastHLine(x + 3, mid, w - 6, C_LINE);
+  int bar = (v * (hh / 2 - 2)) / 1000;
+  if (bar >= 0) tft.fillRect(x + 3, mid - bar, w - 6, bar, C_ACCENT);
+  else tft.fillRect(x + 3, mid, w - 6, -bar, C_ACCENT2);
 }
 
 static void drawSusp(int v) {
-  int x = 44, y = 122, w = 76, h = 6;
-  tft.fillRect(x, y, w, h, C_PANEL);
+  int x = 6, y = 126, w = 116, h = 8;
   int fill = (v + 1000) * w / 2000;
-  tft.fillRect(x, y, fill, h, C_ACCENT2);
-  tft.drawRect(42, 114, 80, 14, C_DIM);
+  tft.fillRect(x + 1, y + 1, w - 2, h - 2, C_PANEL2);
+  if (fill > 4) tft.fillRect(x + 2, y + 2, fill - 4, h - 4, C_ACCENT);
 }
 
 static void drawMode(uint8_t mode) {
-  tft.fillRect(44, 82, 76, 20, C_PANEL);
   const char *name = (mode == 0) ? "ECO" : (mode == 1) ? "NORM" : "SPORT";
-  uint16_t col = (mode == 2) ? C_ACCENT : C_TEXT;
-  tft.drawText(60, 86, name, col, 0xFFFF, 2);
+  uint16_t col = (mode == 2) ? C_ACCENT2 : C_TEXT;
+  drawText8x16(48, 76, name, col, C_PANEL, 1);
 }
 
-static void drawFooter() {
-  tft.fillRect(8, 136, 112, 14, C_PANEL);
-  tft.drawText(10, 136, "TRIM", C_DIM, 0xFFFF, 1);
+static void drawSpeed(uint16_t kmh) {
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%u", kmh);
+  drawText8x16(48, 44, buf, C_TEXT, C_PANEL, 1);
+  tft.drawText(84, 52, "KM/H", C_MUTED, 0xFFFF, 1);
 }
 
 static void drawTrim(int16_t s, int16_t t) {
-  char buf[32];
-  tft.fillRect(44, 136, 76, 14, C_PANEL);
-  snprintf(buf, sizeof(buf), "S%+d T%+d", s, t);
-  tft.drawText(44, 136, buf, C_TEXT, 0xFFFF, 1);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "TRIM S%+d T%+d", s, t);
+  tft.drawText(8, 144, buf, C_TEXT, 0xFFFF, 1);
 }
 
-static void drawAnimAccent() {
+static void drawTimers() {
+  uint32_t d = driveTimer.totalMs / 1000;
+  uint32_t s = sessionTimer.totalMs / 1000;
+  char buf[12];
+  snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)(d/60), (unsigned long)(d%60));
+  tft.drawText(44, 104, buf, C_TEXT, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)(s/60), (unsigned long)(s%60));
+  tft.drawText(44, 118, buf, C_MUTED, 0xFFFF, 1);
+}
+
+static void renderHome() {
   uint32_t now = millis();
-  int w = TFT_W - 12;
-  int t = (now / 20) % (2 * w);
-  int x = t < w ? t : (2 * w - t);
-  tft.fillRect(6, 20, TFT_W - 12, 2, rgb565(12, 22, 34));
-  tft.fillRect(6 + x, 20, 10, 2, C_ACCENT);
-}
+  bool connected = (now - lastAckMs) < 1000;
+  bool gyroOn = false;
+  if (PIN_SW_GYRO >= 0) {
+    gyroOn = SW_GYRO_ACTIVE_LOW ? (digitalRead(PIN_SW_GYRO) == LOW)
+                                : (digitalRead(PIN_SW_GYRO) == HIGH);
+  }
+  uint16_t speedSrc = 0;
+  if (telemetry.valid && (now - telemetry.lastMs) < 800) {
+    speedSrc = telemetry.speedKmh;
+  } else {
+    speedSrc = (uint16_t)((abs(throtAxis.value) * (uint32_t)cfg.maxKmh) / 1000);
+  }
+  uiSteer = lerpf(uiSteer, steerAxis.value, 0.25f);
+  uiThrot = lerpf(uiThrot, throtAxis.value, 0.25f);
+  uiSusp = lerpf(uiSusp, suspAxis.value, 0.25f);
+  uiSpeed = lerpf(uiSpeed, speedSrc, 0.25f);
 
-static void renderHome(bool force) {
-  bool connected = (millis() - lastAckMs) < 1000;
-  if (force || uiDirty) {
-    drawHeader();
-    drawPanels();
-    drawFooter();
-    uiDirty = false;
-    lastSteerUI = 9999;
-    lastThrotUI = 9999;
-    lastSuspUI = 9999;
-    lastModeUI = 255;
-    lastConnUI = !connected;
-  }
-  if (force || connected != lastConnUI) {
-    drawConnection(connected);
-    lastConnUI = connected;
-  }
-  if (force || abs(throtAxis.value - lastThrotUI) > 10) {
-    drawThrottle(throtAxis.value);
-    lastThrotUI = throtAxis.value;
-  }
-  if (force || abs(steerAxis.value - lastSteerUI) > 10) {
-    drawSteer(steerAxis.value);
-    lastSteerUI = steerAxis.value;
-  }
-  if (force || abs(suspAxis.value - lastSuspUI) > 10) {
-    drawSusp(suspAxis.value);
-    lastSuspUI = suspAxis.value;
-  }
-  if (force || cfg.driveMode != lastModeUI) {
-    drawMode(cfg.driveMode);
-    lastModeUI = cfg.driveMode;
-  }
+  drawBackground(now);
+  drawHeader(connected, gyroOn, now);
+
+  drawCard(6, 24, 22, 108, "THR");
+  drawCard(100, 24, 22, 108, "STR");
+  drawCard(32, 24, 64, 28, "SPEED");
+  drawCard(32, 54, 64, 24, "MODE");
+  drawCard(32, 80, 64, 20, "TIMERS");
+  drawCard(6, 124, 116, 10, "SUSP");
+  drawCard(6, 136, 116, 18, "TRIM");
+
+  drawThrottle((int)uiThrot);
+  drawSteer((int)uiSteer);
+  drawMode(cfg.driveMode);
+  drawSpeed((uint16_t)uiSpeed);
+  drawSusp((int)uiSusp);
   drawTrim(cfg.trimSteer, cfg.trimThrot);
-  drawAnimAccent();
+  drawTimers();
+  tft.present();
 }
 
-static const char *menuLabels[] = {
-  "TRIM STEER", "TRIM THROT", "DRIVE MODE", "EXPO STEER", "EXPO THROT",
-  "RATE STEER", "RATE THROT", "SEND HZ", "INV STEER", "INV THROT", "CALIBRATE", "SAVE"
+static const char *mainMenuItems[] = {
+  "DASHBOARD", "SETTINGS", "PAIR RX", "PROFILES", "MODEL SETUP",
+  "RATES/EXPO", "OUTPUTS", "CURVES", "MIXER", "NAME EDIT",
+  "CH MAP", "TIMERS", "TELEMETRY", "DIAGNOSTICS", "EVENT LOG",
+  "ADVANCED", "CALIBRATE", "INFO"
 };
-static const uint8_t MENU_COUNT = sizeof(menuLabels) / sizeof(menuLabels[0]);
-static uint8_t menuIndex = 0;
-static uint8_t menuTop = 0;
-static bool menuEdit = false;
+static const uint8_t MAIN_MENU_COUNT = sizeof(mainMenuItems) / sizeof(mainMenuItems[0]);
+static uint8_t mainMenuIndex = 0;
+static uint8_t mainMenuTop = 0;
 
-static void renderMenu() {
-  tft.fillScreen(C_BG);
+static const char *settingsItems[] = {
+  "TRIM STEER", "TRIM THROT", "DRIVE MODE", "EXPO STEER", "EXPO THROT",
+  "RATE STEER", "RATE THROT", "SEND HZ", "MAX KMH", "INV STEER", "INV THROT", "SAVE"
+};
+static const uint8_t SETTINGS_COUNT = sizeof(settingsItems) / sizeof(settingsItems[0]);
+static uint8_t settingsIndex = 0;
+static uint8_t settingsTop = 0;
+static bool settingsEdit = false;
+
+static uint8_t pairIndex = 0;
+static uint8_t profileIndex = 0;
+static uint8_t mainMenuPage = 0;
+static uint8_t ratesIndex = 0;
+static uint8_t outputIndex = 0;
+static uint8_t curveIndex = 0;
+static uint8_t timerIndex = 0;
+static bool advEdit = false;
+static uint8_t advIndex = 0;
+static uint8_t advTop = 0;
+static uint8_t nameCharIndex = 0;
+static bool nameEdit = false;
+static uint8_t chMapIndex = 0;
+static uint8_t mixerIndex = 0;
+static bool chMapEdit = false;
+
+static void renderMainMenu() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "OPENTX MENU", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+
+  if (mainMenuIndex < mainMenuTop) mainMenuTop = mainMenuIndex;
+  if (mainMenuIndex > mainMenuTop + 7) mainMenuTop = mainMenuIndex - 7;
+
+  for (uint8_t i = 0; i < 8; i++) {
+    uint8_t idx = mainMenuTop + i;
+    if (idx >= MAIN_MENU_COUNT) break;
+    int y = 24 + i * 14;
+    bool sel = (idx == mainMenuIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 12, rowBg);
+    tft.drawText(10, y + 2, mainMenuItems[idx], rowFg, 0xFFFF, 1);
+  }
+  tft.present();
+}
+
+static void renderSettings() {
+  drawBackground(millis());
   tft.drawText(8, 6, "SETTINGS", C_TEXT, 0xFFFF, 1);
-  tft.drawRect(6, 20, 116, 128, C_DIM);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
 
-  if (menuIndex < menuTop) menuTop = menuIndex;
-  if (menuIndex > menuTop + 7) menuTop = menuIndex - 7;
+  if (settingsIndex < settingsTop) settingsTop = settingsIndex;
+  if (settingsIndex > settingsTop + 7) settingsTop = settingsIndex - 7;
 
   char buf[16];
   for (uint8_t i = 0; i < 8; i++) {
-    uint8_t idx = menuTop + i;
-    if (idx >= MENU_COUNT) break;
+    uint8_t idx = settingsTop + i;
+    if (idx >= SETTINGS_COUNT) break;
     int y = 24 + i * 14;
-    bool sel = (idx == menuIndex);
-    uint16_t rowBg = sel ? (menuEdit ? C_ACCENT2 : C_ACCENT) : C_PANEL;
-    uint16_t rowFg = sel ? C_BG : C_TEXT;
+    bool sel = (idx == settingsIndex);
+    uint16_t rowBg = sel ? (settingsEdit ? C_ACCENT2 : C_ACCENT) : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
     tft.fillRect(8, y, 112, 12, rowBg);
-    tft.drawText(10, y + 2, menuLabels[idx], rowFg, 0xFFFF, 1);
+    tft.drawText(10, y + 2, settingsItems[idx], rowFg, 0xFFFF, 1);
 
     const char *val = "";
     if (idx == 0) { snprintf(buf, sizeof(buf), "%d", cfg.trimSteer); val = buf; }
@@ -764,19 +1153,366 @@ static void renderMenu() {
     else if (idx == 5) { snprintf(buf, sizeof(buf), "%u", cfg.rateSteer); val = buf; }
     else if (idx == 6) { snprintf(buf, sizeof(buf), "%u", cfg.rateThrot); val = buf; }
     else if (idx == 7) { snprintf(buf, sizeof(buf), "%u", cfg.sendHz); val = buf; }
-    else if (idx == 8) { val = cfg.invertSteer ? "ON" : "OFF"; }
-    else if (idx == 9) { val = cfg.invertThrot ? "ON" : "OFF"; }
-    else if (idx == 10) { val = ">"; }
+    else if (idx == 8) { snprintf(buf, sizeof(buf), "%u", cfg.maxKmh); val = buf; }
+    else if (idx == 9) { val = cfg.invertSteer ? "ON" : "OFF"; }
+    else if (idx == 10) { val = cfg.invertThrot ? "ON" : "OFF"; }
     else if (idx == 11) { val = ">"; }
     int vx = 8 + 112 - (strlen(val) * 6);
     tft.drawText(vx, y + 2, val, rowFg, 0xFFFF, 1);
   }
+  tft.present();
+}
+
+static void renderPairMenu() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "PAIR RX", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+
+  for (uint8_t i = 0; i < MAX_PEERS; i++) {
+    int y = 24 + i * 20;
+    bool sel = (i == pairIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 16, rowBg);
+
+    char label[16];
+    snprintf(label, sizeof(label), "RX %u", i + 1);
+    tft.drawText(10, y + 4, label, rowFg, 0xFFFF, 1);
+
+    const char *val = peers[i].valid ? (i == activePeer ? "ACTIVE" : "PAIRED") : "EMPTY";
+    int vx = 8 + 112 - (strlen(val) * 6);
+    tft.drawText(vx, y + 4, val, rowFg, 0xFFFF, 1);
+  }
+
+  if (pairingActive) {
+    tft.fillRect(8, 124, 112, 16, C_PANEL);
+    tft.drawText(10, 126, "LISTENING...", C_TEXT, 0xFFFF, 1);
+  } else {
+    tft.fillRect(8, 124, 112, 16, C_PANEL);
+    tft.drawText(10, 126, "SET=PAIR  HOLD=DEL", C_MUTED, 0xFFFF, 1);
+  }
+  tft.present();
+}
+
+static void renderProfiles() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "PROFILES", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  for (uint8_t i = 0; i < MAX_PROFILES; i++) {
+    int y = 24 + i * 18;
+    bool sel = (i == profileIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 14, rowBg);
+    tft.drawText(10, y + 3, profiles[i].name, rowFg, 0xFFFF, 1);
+    if (i == activeProfile) tft.drawText(90, y + 3, "ACTIVE", rowFg, 0xFFFF, 1);
+  }
+  tft.fillRect(8, 128, 112, 16, C_PANEL);
+  tft.drawText(10, 130, "SET=LOAD  HOLD=SAVE", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderTelemetry() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "TELEMETRY", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  char buf[16];
+  uint32_t age = telemetry.valid ? (millis() - telemetry.lastMs) : 9999;
+  snprintf(buf, sizeof(buf), "%u", telemetry.speedKmh);
+  tft.drawText(10, 28, "SPEED", C_MUTED, 0xFFFF, 1);
+  drawText8x16(10, 40, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(60, 48, "KM/H", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%d", telemetry.rssi);
+  tft.drawText(10, 72, "RSSI", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 84, buf, C_TEXT, 0xFFFF, 2);
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)age);
+  tft.drawText(10, 110, "AGE MS", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 122, buf, C_TEXT, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderModelSetup() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "MODEL SETUP", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  tft.drawText(10, 28, "MODEL", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 42, profiles[activeProfile].name, C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 60, "FAILSAFE", C_MUTED, 0xFFFF, 1);
+  char buf[12];
+  snprintf(buf, sizeof(buf), "S:%u T:%u", model.failsafeSteer, model.failsafeThrot);
+  tft.drawText(10, 74, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 92, "NAME=SET", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 104, "SAVE=HOLD", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderRatesExpo() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "RATES/EXPO", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  const char *items[] = { "STEER", "THROT", "AUX" };
+  for (int i = 0; i < 3; i++) {
+    int y = 26 + i * 34;
+    bool sel = (i == ratesIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 28, rowBg);
+    tft.drawText(10, y + 4, items[i], rowFg, 0xFFFF, 1);
+    RateExpo *re = (i == 0) ? &model.steer : (i == 1) ? &model.throttle : &model.aux;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "R%u E%u", re->rate, re->expo);
+    tft.drawText(10, y + 16, buf, rowFg, 0xFFFF, 1);
+  }
+  tft.present();
+}
+
+static void renderOutputs() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "OUTPUTS", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  const char *ch[] = { "CH1", "CH2", "CH3", "CH4" };
+  for (int i = 0; i < 4; i++) {
+    int y = 26 + i * 24;
+    bool sel = (i == outputIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 18, rowBg);
+    tft.drawText(10, y + 4, ch[i], rowFg, 0xFFFF, 1);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", channels[i].value);
+    tft.drawText(90, y + 4, buf, rowFg, 0xFFFF, 1);
+  }
+  tft.present();
+}
+
+static void renderCurves() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "CURVES", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  int cx = 12, cy = 36, w = 104, h = 80;
+  tft.drawRect(cx, cy, w, h, C_LINE);
+  Curve &c = model.curves[curveIndex];
+  for (int i = 0; i < 8; i++) {
+    int x0 = cx + (i * (w - 2)) / 8;
+    int y0 = cy + h/2 - (c.points[i] * (h/2-2)) / 100;
+    int x1 = cx + ((i+1) * (w - 2)) / 8;
+    int y1 = cy + h/2 - (c.points[i+1] * (h/2-2)) / 100;
+    tft.drawLine(x0, y0, x1, y1, C_ACCENT);
+  }
+  char buf[8];
+  snprintf(buf, sizeof(buf), "C%u", curveIndex + 1);
+  tft.drawText(10, 24, buf, C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 122, "SET=NEXT", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderTimers() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "TIMERS", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  uint32_t d = driveTimer.totalMs / 1000;
+  uint32_t s = sessionTimer.totalMs / 1000;
+  char buf[16];
+  tft.drawText(10, 30, "DRIVE", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)(d/60), (unsigned long)(d%60));
+  drawText8x16(10, 42, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 74, "SESSION", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)(s/60), (unsigned long)(s%60));
+  drawText8x16(10, 86, buf, C_TEXT, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderDiagnostics() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "DIAGNOSTICS", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  char buf[16];
+  tft.drawText(10, 30, "STEER RAW", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%d", steerAxis.raw);
+  tft.drawText(10, 42, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 58, "THROT RAW", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%d", throtAxis.raw);
+  tft.drawText(10, 70, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 86, "SUSP RAW", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%d", suspAxis.raw);
+  tft.drawText(10, 98, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 114, "FPS", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%u", (unsigned)(1000 / UI_FRAME_MS));
+  tft.drawText(10, 126, buf, C_TEXT, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderEventLog() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "EVENT LOG", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  for (int i = 0; i < 6; i++) {
+    int idx = (eventHead + 19 - i) % 20;
+    EventLogItem &e = eventLog[idx];
+    int y = 24 + i * 18;
+    char buf[18];
+    snprintf(buf, sizeof(buf), "%lu C%u", (unsigned long)e.ms, e.code);
+    tft.drawText(10, y + 3, buf, C_TEXT, 0xFFFF, 1);
+  }
+  tft.present();
+}
+
+static void renderMixer() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "MIXER", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  const char *items[] = { "STEER->AUX", "THROT->AUX" };
+  int8_t *vals[] = { &model.mixSteerToAux, &model.mixThrotToAux };
+  for (int i = 0; i < 2; i++) {
+    int y = 30 + i * 26;
+    bool sel = (i == mixerIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 20, rowBg);
+    tft.drawText(10, y + 4, items[i], rowFg, 0xFFFF, 1);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", (int)*vals[i]);
+    tft.drawText(88, y + 4, buf, rowFg, 0xFFFF, 1);
+  }
+  tft.drawText(10, 90, "SET=SAVE", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static const char nameChars[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+
+static void renderNameEdit() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "NAME EDIT", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  tft.drawText(10, 30, "PROFILE", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 44, profiles[activeProfile].name, C_TEXT, 0xFFFF, 1);
+  int x = 10 + nameCharIndex * 6;
+  tft.drawFastHLine(x, 54, 6, nameEdit ? C_ACCENT2 : C_ACCENT);
+  tft.drawText(10, 70, nameEdit ? "EDIT CHAR" : "MOVE CURSOR", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 86, "SET=TOGGLE", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 102, "MENU=BACK", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderChMap() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "CHANNEL MAP", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  const char *src[] = { "STEER", "THROT", "AUX", "NONE" };
+  for (int i = 0; i < 4; i++) {
+    int y = 26 + i * 24;
+    bool sel = (i == chMapIndex);
+    uint16_t rowBg = sel ? C_ACCENT : C_PANEL;
+    uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+    tft.fillRect(8, y, 112, 18, rowBg);
+    char label[8];
+    snprintf(label, sizeof(label), "CH%u", i + 1);
+    tft.drawText(10, y + 4, label, rowFg, 0xFFFF, 1);
+    uint8_t v = model.chMap[i];
+    if (v > 3) v = 3;
+    tft.drawText(70, y + 4, src[v], rowFg, 0xFFFF, 1);
+  }
+  tft.drawText(10, 120, "SET=SAVE", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static void advDrawTitle(const char *title) {
+  drawBackground(millis());
+  tft.drawText(8, 6, title, C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+}
+
+static void advDrawRow(int y, bool sel, const char *label, const char *value, bool edit) {
+  uint16_t rowBg = sel ? (edit ? C_ACCENT2 : C_ACCENT) : C_PANEL;
+  uint16_t rowFg = sel ? C_BG_TOP : C_TEXT;
+  tft.fillRect(8, y, 112, 12, rowBg);
+  tft.drawText(10, y + 2, label, rowFg, 0xFFFF, 1);
+  int vx = 8 + 112 - (strlen(value) * 6);
+  tft.drawText(vx, y + 2, value, rowFg, 0xFFFF, 1);
+}
+
+static void advSyncFromCfg() {
+  advDriveMode = cfg.driveMode;
+  advInvertSteer = cfg.invertSteer;
+  advInvertThrot = cfg.invertThrot;
+  advSendHz = cfg.sendHz;
+  advMaxKmh = cfg.maxKmh;
+  advSteerRate = cfg.rateSteer;
+  advThrotRate = cfg.rateThrot;
+  advSteerExpo = cfg.expoSteer;
+  advThrotExpo = cfg.expoThrot;
+  advSteerSub = model.steer.subtrim;
+  advThrotSub = model.throttle.subtrim;
+}
+
+static void advApplyToCfg() {
+  cfg.driveMode = (uint8_t)advDriveMode;
+  cfg.invertSteer = (uint8_t)advInvertSteer;
+  cfg.invertThrot = (uint8_t)advInvertThrot;
+  cfg.sendHz = (uint8_t)advSendHz;
+  cfg.maxKmh = (uint16_t)advMaxKmh;
+  cfg.rateSteer = (uint8_t)advSteerRate;
+  cfg.rateThrot = (uint8_t)advThrotRate;
+  cfg.expoSteer = (uint8_t)advSteerExpo;
+  cfg.expoThrot = (uint8_t)advThrotExpo;
+  model.steer.subtrim = advSteerSub;
+  model.throttle.subtrim = advThrotSub;
+}
+
+static void advActionSave() {
+  advApplyToCfg();
+  saveConfig();
+  saveModel();
+  buzzerSelect();
+}
+
+static void advActionReset() {
+  loadDefaults();
+  initModelDefaults();
+  advSyncFromCfg();
+  buzzerAlert();
+}
+
+static void advActionBeep() {
+  buzzerBeep(2800, 30);
+  delay(35);
+  buzzerBeep(3000, 40);
+}
+
+static void renderAdvanced() {
+  menuRender(advPage, advIndex, advTop, advEdit, advDrawTitle, advDrawRow);
+  tft.present();
+}
+static void renderInfo() {
+  drawBackground(millis());
+  tft.drawText(8, 6, "ABOUT", C_TEXT, 0xFFFF, 1);
+  tft.drawRect(6, 20, 116, 128, C_LINE);
+  tft.drawText(10, 30, "OpenTX ESP32", C_TEXT, 0xFFFF, 1);
+  tft.drawText(10, 46, "ESP-NOW TX", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 62, "DMA TFT", C_MUTED, 0xFFFF, 1);
+  tft.drawText(10, 78, "v1.0", C_MUTED, 0xFFFF, 1);
+  tft.present();
+}
+
+static void renderSplash() {
+  for (int i = 0; i < 18; i++) {
+    drawBackground(millis());
+    tft.fillRect(10, 46, 108, 50, C_PANEL);
+    tft.drawRect(10, 46, 108, 50, C_LINE);
+    drawText8x16(18, 56, "OpenTX", C_TEXT, C_PANEL, 1);
+    tft.drawText(30, 74, "ESP32 RADIO", C_MUTED, 0xFFFF, 1);
+    int w = (i * 100) / 17;
+    tft.fillRect(14, 92, 100, 4, C_LINE);
+    tft.fillRect(14, 92, w, 4, C_ACCENT2);
+    tft.present();
+    delay(12);
+  }
 }
 
 static void renderCalScreen() {
-  tft.fillScreen(C_BG);
+  drawBackground(millis());
   tft.drawText(8, 6, "CALIBRATION", C_TEXT, 0xFFFF, 1);
-  tft.drawRect(6, 20, 116, 120, C_DIM);
+  tft.drawRect(6, 20, 116, 120, C_LINE);
   const char *line1 = "";
   const char *line2 = "";
   switch (calStep) {
@@ -789,6 +1525,7 @@ static void renderCalScreen() {
   }
   tft.drawText(10, 40, line1, C_TEXT, 0xFFFF, 1);
   tft.drawText(10, 56, line2, C_TEXT, 0xFFFF, 1);
+  tft.present();
 }
 
 // --------------------------
@@ -848,8 +1585,7 @@ static void updateCalibration() {
     if (btnMenu.pressed) {
       calStep = CAL_NONE;
       screen = SCREEN_HOME;
-      uiDirty = true;
-      tft.fillScreen(C_BG);
+      renderHome();
     }
   }
 }
@@ -868,7 +1604,8 @@ static void handleButtons() {
         startCalibration();
       } else {
         screen = SCREEN_MENU;
-        renderMenu();
+        renderMainMenu();
+        buzzerBeep(1000, 40);
       }
     }
     if (btnTrimPlus.pressed) cfg.trimSteer = clampi(cfg.trimSteer + 1, -50, 50);
@@ -876,70 +1613,443 @@ static void handleButtons() {
     if (btnSet.pressed) cfg.driveMode = (cfg.driveMode + 1) % 3;
   } else if (screen == SCREEN_MENU) {
     if (btnMenu.pressed) {
-      if (menuEdit) {
-        menuEdit = false;
-        renderMenu();
-      } else {
-        saveConfig();
-        screen = SCREEN_HOME;
-        uiDirty = true;
-        tft.fillScreen(C_BG);
-      }
+      screen = SCREEN_HOME;
+      renderHome();
+      buzzerBack();
+    }
+    if (btnTrimPlus.pressed) {
+      mainMenuIndex = (mainMenuIndex + 1) % MAIN_MENU_COUNT;
+      renderMainMenu();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      mainMenuIndex = (mainMenuIndex == 0) ? (MAIN_MENU_COUNT - 1) : (mainMenuIndex - 1);
+      renderMainMenu();
+      buzzerClick();
     }
     if (btnSet.pressed) {
-      if (menuIndex == 10) {
+      buzzerSelect();
+      if (mainMenuIndex == 0) {
+        screen = SCREEN_HOME;
+        renderHome();
+      } else if (mainMenuIndex == 1) {
+        screen = SCREEN_SETTINGS;
+        renderSettings();
+      } else if (mainMenuIndex == 2) {
+        screen = SCREEN_PAIR;
+        renderPairMenu();
+      } else if (mainMenuIndex == 3) {
+        screen = SCREEN_PROFILES;
+        renderProfiles();
+      } else if (mainMenuIndex == 4) {
+        screen = SCREEN_MODEL;
+        renderModelSetup();
+      } else if (mainMenuIndex == 5) {
+        screen = SCREEN_RATES;
+        renderRatesExpo();
+      } else if (mainMenuIndex == 6) {
+        screen = SCREEN_OUTPUTS;
+        renderOutputs();
+      } else if (mainMenuIndex == 7) {
+        screen = SCREEN_CURVES;
+        renderCurves();
+      } else if (mainMenuIndex == 8) {
+        screen = SCREEN_MIXER;
+        renderMixer();
+      } else if (mainMenuIndex == 9) {
+        screen = SCREEN_NAME;
+        renderNameEdit();
+      } else if (mainMenuIndex == 10) {
+        screen = SCREEN_CHMAP;
+        renderChMap();
+      } else if (mainMenuIndex == 11) {
+        screen = SCREEN_TIMERS;
+        renderTimers();
+      } else if (mainMenuIndex == 12) {
+        screen = SCREEN_TELEMETRY;
+        renderTelemetry();
+      } else if (mainMenuIndex == 13) {
+        screen = SCREEN_DIAG;
+        renderDiagnostics();
+      } else if (mainMenuIndex == 14) {
+        screen = SCREEN_LOG;
+        renderEventLog();
+      } else if (mainMenuIndex == 15) {
+        screen = SCREEN_ADV;
+        renderAdvanced();
+      } else if (mainMenuIndex == 16) {
         screen = SCREEN_CAL;
         startCalibration();
-      } else if (menuIndex == 11) {
-        saveConfig();
-        buzzerBeep(1000, 120);
-        renderMenu();
+      } else if (mainMenuIndex == 17) {
+        screen = SCREEN_INFO;
+        renderInfo();
+      }
+    }
+  } else if (screen == SCREEN_SETTINGS) {
+    if (btnMenu.pressed) {
+      if (settingsEdit) {
+        settingsEdit = false;
+        renderSettings();
       } else {
-        menuEdit = !menuEdit;
-        renderMenu();
+        screen = SCREEN_MENU;
+        renderMainMenu();
+      }
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      if (settingsIndex == SETTINGS_COUNT - 1) {
+        saveConfig();
+        buzzerSelect();
+        renderSettings();
+      } else {
+        settingsEdit = !settingsEdit;
+        renderSettings();
+        buzzerSelect();
       }
     }
     if (btnTrimPlus.pressed) {
-      if (menuEdit) {
+      if (settingsEdit) {
         // Adjust
         int delta = 1;
-        if (menuIndex == 0) cfg.trimSteer = clampi(cfg.trimSteer + delta, -50, 50);
-        else if (menuIndex == 1) cfg.trimThrot = clampi(cfg.trimThrot + delta, -50, 50);
-        else if (menuIndex == 2) cfg.driveMode = (cfg.driveMode + 1) % 3;
-        else if (menuIndex == 3) cfg.expoSteer = clampi(cfg.expoSteer + 2, 0, 100);
-        else if (menuIndex == 4) cfg.expoThrot = clampi(cfg.expoThrot + 2, 0, 100);
-        else if (menuIndex == 5) cfg.rateSteer = clampi(cfg.rateSteer + 2, 50, 100);
-        else if (menuIndex == 6) cfg.rateThrot = clampi(cfg.rateThrot + 2, 50, 100);
-        else if (menuIndex == 7) cfg.sendHz = clampi(cfg.sendHz + 1, 20, 60);
-        else if (menuIndex == 8) cfg.invertSteer = !cfg.invertSteer;
-        else if (menuIndex == 9) cfg.invertThrot = !cfg.invertThrot;
-        renderMenu();
+        if (settingsIndex == 0) cfg.trimSteer = clampi(cfg.trimSteer + delta, -50, 50);
+        else if (settingsIndex == 1) cfg.trimThrot = clampi(cfg.trimThrot + delta, -50, 50);
+        else if (settingsIndex == 2) cfg.driveMode = (cfg.driveMode + 1) % 3;
+        else if (settingsIndex == 3) cfg.expoSteer = clampi(cfg.expoSteer + 2, 0, 100);
+        else if (settingsIndex == 4) cfg.expoThrot = clampi(cfg.expoThrot + 2, 0, 100);
+        else if (settingsIndex == 5) cfg.rateSteer = clampi(cfg.rateSteer + 2, 50, 100);
+        else if (settingsIndex == 6) cfg.rateThrot = clampi(cfg.rateThrot + 2, 50, 100);
+        else if (settingsIndex == 7) cfg.sendHz = clampi(cfg.sendHz + 1, 20, 60);
+        else if (settingsIndex == 8) cfg.maxKmh = clampi(cfg.maxKmh + 1, 1, 200);
+        else if (settingsIndex == 9) cfg.invertSteer = !cfg.invertSteer;
+        else if (settingsIndex == 10) cfg.invertThrot = !cfg.invertThrot;
+        renderSettings();
       } else {
-        menuIndex = (menuIndex + 1) % MENU_COUNT;
-        renderMenu();
+        settingsIndex = (settingsIndex + 1) % SETTINGS_COUNT;
+        renderSettings();
       }
+      buzzerClick();
     }
     if (btnTrimMinus.pressed) {
-      if (menuEdit) {
+      if (settingsEdit) {
         int delta = -1;
-        if (menuIndex == 0) cfg.trimSteer = clampi(cfg.trimSteer + delta, -50, 50);
-        else if (menuIndex == 1) cfg.trimThrot = clampi(cfg.trimThrot + delta, -50, 50);
-        else if (menuIndex == 2) cfg.driveMode = (cfg.driveMode == 0) ? 2 : (cfg.driveMode - 1);
-        else if (menuIndex == 3) cfg.expoSteer = clampi(cfg.expoSteer - 2, 0, 100);
-        else if (menuIndex == 4) cfg.expoThrot = clampi(cfg.expoThrot - 2, 0, 100);
-        else if (menuIndex == 5) cfg.rateSteer = clampi(cfg.rateSteer - 2, 50, 100);
-        else if (menuIndex == 6) cfg.rateThrot = clampi(cfg.rateThrot - 2, 50, 100);
-        else if (menuIndex == 7) cfg.sendHz = clampi(cfg.sendHz - 1, 20, 60);
-        else if (menuIndex == 8) cfg.invertSteer = !cfg.invertSteer;
-        else if (menuIndex == 9) cfg.invertThrot = !cfg.invertThrot;
-        renderMenu();
+        if (settingsIndex == 0) cfg.trimSteer = clampi(cfg.trimSteer + delta, -50, 50);
+        else if (settingsIndex == 1) cfg.trimThrot = clampi(cfg.trimThrot + delta, -50, 50);
+        else if (settingsIndex == 2) cfg.driveMode = (cfg.driveMode == 0) ? 2 : (cfg.driveMode - 1);
+        else if (settingsIndex == 3) cfg.expoSteer = clampi(cfg.expoSteer - 2, 0, 100);
+        else if (settingsIndex == 4) cfg.expoThrot = clampi(cfg.expoThrot - 2, 0, 100);
+        else if (settingsIndex == 5) cfg.rateSteer = clampi(cfg.rateSteer - 2, 50, 100);
+        else if (settingsIndex == 6) cfg.rateThrot = clampi(cfg.rateThrot - 2, 50, 100);
+        else if (settingsIndex == 7) cfg.sendHz = clampi(cfg.sendHz - 1, 20, 60);
+        else if (settingsIndex == 8) cfg.maxKmh = clampi(cfg.maxKmh - 1, 1, 200);
+        else if (settingsIndex == 9) cfg.invertSteer = !cfg.invertSteer;
+        else if (settingsIndex == 10) cfg.invertThrot = !cfg.invertThrot;
+        renderSettings();
       } else {
-        menuIndex = (menuIndex == 0) ? (MENU_COUNT - 1) : (menuIndex - 1);
-        renderMenu();
+        settingsIndex = (settingsIndex == 0) ? (SETTINGS_COUNT - 1) : (settingsIndex - 1);
+        renderSettings();
       }
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_PAIR) {
+    if (btnMenu.pressed) {
+      pairingActive = false;
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnTrimPlus.pressed) {
+      pairIndex = (pairIndex + 1) % MAX_PEERS;
+      renderPairMenu();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      pairIndex = (pairIndex == 0) ? (MAX_PEERS - 1) : (pairIndex - 1);
+      renderPairMenu();
+      buzzerClick();
+    }
+    if (btnSet.released) {
+      uint32_t held = millis() - btnSet.pressStart;
+      if (held >= 1500) {
+        if (peers[pairIndex].valid) {
+          peers[pairIndex].valid = 0;
+          savePeers();
+          buzzerAlert();
+        }
+        renderPairMenu();
+      } else {
+        if (peers[pairIndex].valid) {
+          activePeer = pairIndex;
+          savePeers();
+          buzzerSelect();
+          renderPairMenu();
+        } else {
+          pairingActive = true;
+          pairingUntil = millis() + PAIR_LISTEN_MS;
+          buzzerSelect();
+          renderPairMenu();
+        }
+      }
+    }
+  } else if (screen == SCREEN_PROFILES) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnTrimPlus.pressed) {
+      profileIndex = (profileIndex + 1) % MAX_PROFILES;
+      renderProfiles();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      profileIndex = (profileIndex == 0) ? (MAX_PROFILES - 1) : (profileIndex - 1);
+      renderProfiles();
+      buzzerClick();
+    }
+    if (btnSet.released) {
+      uint32_t held = millis() - btnSet.pressStart;
+      if (held >= 1500) {
+        saveProfile(profileIndex);
+        buzzerSelect();
+        renderProfiles();
+      } else {
+        loadProfile(profileIndex);
+        buzzerSelect();
+        renderProfiles();
+      }
+    }
+  } else if (screen == SCREEN_TELEMETRY) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      renderTelemetry();
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_MODEL) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.released) {
+      uint32_t held = millis() - btnSet.pressStart;
+      if (held >= 1500) {
+        saveModel();
+        buzzerSelect();
+        renderModelSetup();
+      } else {
+        screen = SCREEN_NAME;
+        renderNameEdit();
+        buzzerSelect();
+      }
+    }
+  } else if (screen == SCREEN_RATES) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnTrimPlus.pressed) {
+      ratesIndex = (ratesIndex + 1) % 3;
+      renderRatesExpo();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      ratesIndex = (ratesIndex == 0) ? 2 : (ratesIndex - 1);
+      renderRatesExpo();
+      buzzerClick();
+    }
+    if (btnSet.pressed) {
+      RateExpo *re = (ratesIndex == 0) ? &model.steer : (ratesIndex == 1) ? &model.throttle : &model.aux;
+      re->rate = clampi(re->rate + 5, 50, 120);
+      re->expo = clampi(re->expo + 5, 0, 100);
+      renderRatesExpo();
+      buzzerSelect();
+    }
+  } else if (screen == SCREEN_OUTPUTS) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnTrimPlus.pressed) {
+      outputIndex = (outputIndex + 1) % 4;
+      renderOutputs();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      outputIndex = (outputIndex == 0) ? 3 : (outputIndex - 1);
+      renderOutputs();
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_CURVES) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      curveIndex = (curveIndex + 1) % 3;
+      renderCurves();
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_TIMERS) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      driveTimer.totalMs = 0;
+      sessionTimer.totalMs = 0;
+      renderTimers();
+      buzzerSelect();
+    }
+  } else if (screen == SCREEN_DIAG) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      renderDiagnostics();
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_LOG) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+  } else if (screen == SCREEN_ADV) {
+    if (btnMenu.pressed) {
+      advEdit = false;
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      MenuItem &it = advItems[advIndex];
+      if (it.type == MENU_ACTION && it.action) it.action();
+      else advEdit = !advEdit;
+      renderAdvanced();
+      buzzerSelect();
+    }
+    if (btnTrimPlus.pressed) {
+      if (advEdit) menuAdjust(advItems[advIndex], 1);
+      else advIndex = (advIndex + 1) % advPage.count;
+      renderAdvanced();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      if (advEdit) menuAdjust(advItems[advIndex], -1);
+      else advIndex = (advIndex == 0) ? (advPage.count - 1) : (advIndex - 1);
+      renderAdvanced();
+      buzzerClick();
     }
   } else if (screen == SCREEN_CAL) {
     updateCalibration();
+  } else if (screen == SCREEN_MIXER) {
+    if (btnMenu.pressed) {
+      saveModel();
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnTrimPlus.pressed) {
+      if (mixerIndex == 0) model.mixSteerToAux = clampi(model.mixSteerToAux + 5, -100, 100);
+      else model.mixThrotToAux = clampi(model.mixThrotToAux + 5, -100, 100);
+      renderMixer();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      if (mixerIndex == 0) model.mixSteerToAux = clampi(model.mixSteerToAux - 5, -100, 100);
+      else model.mixThrotToAux = clampi(model.mixThrotToAux - 5, -100, 100);
+      renderMixer();
+      buzzerClick();
+    }
+    if (btnSet.pressed) {
+      mixerIndex = (mixerIndex + 1) % 2;
+      renderMixer();
+      buzzerSelect();
+    }
+  } else if (screen == SCREEN_NAME) {
+    if (btnMenu.pressed) {
+      saveProfiles();
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      nameEdit = !nameEdit;
+      renderNameEdit();
+      buzzerSelect();
+    }
+    if (btnTrimPlus.pressed) {
+      if (nameEdit) {
+        char *name = profiles[activeProfile].name;
+        const char *pos = strchr(nameChars, name[nameCharIndex]);
+        int idx = pos ? (int)(pos - nameChars) : 0;
+        idx = (idx + 1) % (int)(sizeof(nameChars) - 1);
+        name[nameCharIndex] = nameChars[idx];
+      } else {
+        nameCharIndex = (nameCharIndex + 1) % 11;
+      }
+      renderNameEdit();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      if (nameEdit) {
+        char *name = profiles[activeProfile].name;
+        const char *pos = strchr(nameChars, name[nameCharIndex]);
+        int idx = pos ? (int)(pos - nameChars) : 0;
+        idx = (idx == 0) ? (int)(sizeof(nameChars) - 2) : (idx - 1);
+        name[nameCharIndex] = nameChars[idx];
+      } else {
+        nameCharIndex = (nameCharIndex == 0) ? 10 : (nameCharIndex - 1);
+      }
+      renderNameEdit();
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_CHMAP) {
+    if (btnMenu.pressed) {
+      saveModel();
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
+    if (btnSet.pressed) {
+      chMapEdit = !chMapEdit;
+      renderChMap();
+      buzzerSelect();
+    }
+    if (btnTrimPlus.pressed) {
+      if (chMapEdit) {
+        model.chMap[chMapIndex] = (model.chMap[chMapIndex] + 1) % 4;
+      } else {
+        chMapIndex = (chMapIndex + 1) % 4;
+      }
+      renderChMap();
+      buzzerClick();
+    }
+    if (btnTrimMinus.pressed) {
+      if (chMapEdit) {
+        model.chMap[chMapIndex] = (model.chMap[chMapIndex] == 0) ? 3 : (model.chMap[chMapIndex] - 1);
+      } else {
+        chMapIndex = (chMapIndex == 0) ? 3 : (chMapIndex - 1);
+      }
+      renderChMap();
+      buzzerClick();
+    }
+  } else if (screen == SCREEN_INFO) {
+    if (btnMenu.pressed) {
+      screen = SCREEN_MENU;
+      renderMainMenu();
+      buzzerBack();
+    }
   }
 }
 
@@ -964,11 +2074,10 @@ void setup() {
   buzzerBegin();
   loadConfig();
   tft.begin();
-  tft.fillScreen(C_BG);
-  drawHeader();
-  drawPanels();
-  drawFooter();
-  buzzerBeep(1200, 80);
+  renderSplash();
+  renderHome();
+  buzzerSelect();
+  advSyncFromCfg();
 
   espnowInit();
 }
@@ -976,6 +2085,27 @@ void setup() {
 void loop() {
   buzzerUpdate();
   handleButtons();
+  if (pairingActive && (int32_t)(millis() - pairingUntil) >= 0) {
+    pairingActive = false;
+    if (screen == SCREEN_PAIR) renderPairMenu();
+  }
+  if (telemetry.valid && (millis() - telemetry.lastMs) > 1200) {
+    telemetry.valid = false;
+  }
+  uint32_t nowMs = millis();
+  if (!sessionTimer.running) { sessionTimer.running = true; sessionTimer.lastUpdate = nowMs; }
+  uint32_t dt = nowMs - sessionTimer.lastUpdate;
+  sessionTimer.totalMs += dt;
+  sessionTimer.lastUpdate = nowMs;
+  bool driving = abs(throtAxis.value) > 80;
+  if (driving) {
+    if (!driveTimer.running) { driveTimer.running = true; driveTimer.lastUpdate = nowMs; }
+    uint32_t dtd = nowMs - driveTimer.lastUpdate;
+    driveTimer.totalMs += dtd;
+    driveTimer.lastUpdate = nowMs;
+  } else {
+    driveTimer.running = false;
+  }
 
   // Read and process inputs
   int rawSteer = readAnalogSmooth(PIN_STEERING) + STEER_CENTER_FIX;
@@ -985,6 +2115,16 @@ void loop() {
   processAxis(steerAxis, rawSteer, cfg.steer, cfg.trimSteer, cfg.expoSteer, cfg.rateSteer, cfg.invertSteer);
   processAxis(throtAxis, rawThrot, cfg.throttle, cfg.trimThrot, cfg.expoThrot, cfg.rateThrot, cfg.invertThrot);
   processAxis(suspAxis, rawSusp, cfg.susp, 0, 0, 100, false);
+
+  int16_t steerOut = applyRateExpo(steerAxis.value, model.steer);
+  int16_t throtOut = applyRateExpo(throtAxis.value, model.throttle);
+  int16_t auxOut = applyRateExpo(suspAxis.value, model.aux);
+  auxOut = clampi(auxOut + (steerOut * model.mixSteerToAux) / 100 + (throtOut * model.mixThrotToAux) / 100, -1000, 1000);
+  int16_t src[4] = { steerOut, throtOut, auxOut, 0 };
+  for (int i = 0; i < 4; i++) {
+    uint8_t m = model.chMap[i];
+    channels[i].value = (m < 4) ? src[m] : 0;
+  }
 
   // Send packet
   static uint32_t lastSendMs = 0;
@@ -1011,17 +2151,24 @@ void loop() {
     }
     p.flags = flags;
     p.checksum = calcChecksum(p);
-    esp_now_send(ESPNOW_BROADCAST, (uint8_t *)&p, sizeof(p));
+    const uint8_t *dest = ESPNOW_BROADCAST;
+    if (activePeer < MAX_PEERS && peers[activePeer].valid) dest = peers[activePeer].mac;
+    esp_now_send(dest, (uint8_t *)&p, sizeof(p));
   }
 
   // UI
   if (screen == SCREEN_HOME) {
     if (now - lastFrameMs >= UI_FRAME_MS) {
       lastFrameMs = now;
-      renderHome(false);
+      renderHome();
     }
   } else if (screen == SCREEN_MENU) {
     // static screen, refresh only on changes
+  } else if (screen == SCREEN_TELEMETRY) {
+    if (now - lastTelemMs >= 200) {
+      lastTelemMs = now;
+      renderTelemetry();
+    }
   } else if (screen == SCREEN_CAL) {
     // calibration handled in updateCalibration
   }
