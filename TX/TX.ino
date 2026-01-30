@@ -625,6 +625,12 @@ static float uiSteer = 0.0f;
 static float uiThrot = 0.0f;
 static float uiSusp = 0.0f;
 static float uiSpeed = 0.0f;
+static bool gyroOnState = false;
+static bool lastGyroOnState = false;
+static uint32_t toggleAnimUntil = 0;
+static bool toggleAnimOn = false;
+static bool lastLinkState = false;
+static bool gyroTogglePulse = false;
 
 // Calibration state
 enum CalStep { CAL_NONE, CAL_CENTER, CAL_STEER_SWEEP, CAL_THROT_SWEEP, CAL_SUSP_SWEEP, CAL_DONE };
@@ -692,14 +698,24 @@ static MenuPage advPage = { "ADVANCED", advItems, (uint8_t)(sizeof(advItems) / s
 // --------------------------
 // Buzzer
 // --------------------------
-static const uint16_t buzzClickFreq[] = { 1900 };
+static const uint16_t buzzClickFreq[] = { 3200 };
 static const uint16_t buzzClickDur[] = { 18 };
-static const uint16_t buzzSelectFreq[] = { 2200, 0, 2600 };
-static const uint16_t buzzSelectDur[] = { 20, 20, 30 };
-static const uint16_t buzzBackFreq[] = { 2100, 0, 1700 };
-static const uint16_t buzzBackDur[] = { 16, 18, 22 };
-static const uint16_t buzzAlertFreq[] = { 2800, 0, 2400, 0, 2800 };
-static const uint16_t buzzAlertDur[] = { 25, 20, 25, 20, 40 };
+static const uint16_t buzzSelectFreq[] = { 3600, 0, 4200, 0, 4800 };
+static const uint16_t buzzSelectDur[] = { 18, 12, 20, 12, 26 };
+static const uint16_t buzzBackFreq[] = { 3200, 0, 2600 };
+static const uint16_t buzzBackDur[] = { 16, 14, 22 };
+static const uint16_t buzzAlertFreq[] = { 4800, 0, 4200, 0, 4800 };
+static const uint16_t buzzAlertDur[] = { 20, 14, 24, 14, 36 };
+static const uint16_t buzzStartupFreq[] = { 2600, 0, 3300, 0, 4200 };
+static const uint16_t buzzStartupDur[] = { 60, 20, 60, 20, 120 };
+static const uint16_t buzzToggleOnFreq[] = { 3600, 0, 4400, 0, 5200 };
+static const uint16_t buzzToggleOnDur[] = { 24, 12, 26, 12, 40 };
+static const uint16_t buzzToggleOffFreq[] = { 5200, 0, 4400, 0, 3600 };
+static const uint16_t buzzToggleOffDur[] = { 24, 12, 26, 12, 40 };
+static const uint16_t buzzLinkUpFreq[] = { 4000, 0, 4800 };
+static const uint16_t buzzLinkUpDur[] = { 20, 12, 26 };
+static const uint16_t buzzLinkDownFreq[] = { 3200, 0, 2600 };
+static const uint16_t buzzLinkDownDur[] = { 18, 12, 28 };
 
 static const uint16_t *buzzFreq = nullptr;
 static const uint16_t *buzzDur = nullptr;
@@ -724,9 +740,14 @@ static void buzzerSequence(const uint16_t *freqs, const uint16_t *durs, uint8_t 
 }
 
 static void buzzerClick() { buzzerSequence(buzzClickFreq, buzzClickDur, 1); }
-static void buzzerSelect() { buzzerSequence(buzzSelectFreq, buzzSelectDur, 3); }
+static void buzzerSelect() { buzzerSequence(buzzSelectFreq, buzzSelectDur, 5); }
 static void buzzerBack() { buzzerSequence(buzzBackFreq, buzzBackDur, 3); }
 static void buzzerAlert() { buzzerSequence(buzzAlertFreq, buzzAlertDur, 5); }
+static void buzzerStartup() { buzzerSequence(buzzStartupFreq, buzzStartupDur, 5); }
+static void buzzerToggleOn() { buzzerSequence(buzzToggleOnFreq, buzzToggleOnDur, 5); }
+static void buzzerToggleOff() { buzzerSequence(buzzToggleOffFreq, buzzToggleOffDur, 5); }
+static void buzzerLinkUp() { buzzerSequence(buzzLinkUpFreq, buzzLinkUpDur, 3); }
+static void buzzerLinkDown() { buzzerSequence(buzzLinkDownFreq, buzzLinkDownDur, 3); }
 
 static void buzzerBeep(uint16_t freq, uint16_t ms) {
   static uint16_t singleFreq[1];
@@ -1100,8 +1121,15 @@ static void drawTopBar(const char *title, bool connected, bool gyroOn, uint32_t 
   tft.drawRect(dotX - 1, dotY - 1, 8, 8, C_LINE);
 
   int badgeX = dotX - 22;
-  tft.drawRect(badgeX, 3, 18, 12, gyroOn ? C_ACCENT : C_LINE);
-  tft.drawText(badgeX + 3, 5, gyroOn ? "GYR" : "OFF", gyroOn ? C_ACCENT : C_MUTED, 0xFFFF, 1);
+  if (toggleAnimUntil > now) {
+    uint16_t flash = toggleAnimOn ? C_ACCENT2 : C_WARN;
+    tft.fillRect(badgeX, 3, 18, 12, flash);
+    tft.drawRect(badgeX, 3, 18, 12, C_LINE);
+    tft.drawText(badgeX + 3, 5, gyroOn ? "ON" : "OFF", C_BG_TOP, 0xFFFF, 1);
+  } else {
+    tft.drawRect(badgeX, 3, 18, 12, gyroOn ? C_ACCENT : C_LINE);
+    tft.drawText(badgeX + 3, 5, gyroOn ? "GYR" : "OFF", gyroOn ? C_ACCENT : C_MUTED, 0xFFFF, 1);
+  }
 
   int bars = 0;
   if (telemetry.valid && (millis() - telemetry.lastMs) < 800) {
@@ -1173,6 +1201,14 @@ static void drawProgressBar(int x, int y, int w, int h, int v, int vmax, uint16_
   tft.fillRect(x, y, fill, h, col);
 }
 
+static void drawTrimBar100(int x, int y, int w, int h, int trim, const char *label) {
+  int pct = 50 + (trim * 50) / 200;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  int v = (pct - 50) * 20;
+  tft.drawText(x, y - 7, label, C_MUTED, 0xFFFF, 1);
+  drawCenterBar(x + 18, y, w - 18, h, v, C_ACCENT, C_ACCENT2);
+}
 static void renderHome() {
   uint32_t now = millis();
   bool connected = telemetry.valid && ((now - telemetry.lastMs) < 1000);
@@ -1195,7 +1231,7 @@ static void renderHome() {
   uiSpeed = lerpf(uiSpeed, speedSrc, 0.18f);
 
   drawBackground(now);
-  drawTopBar(profiles[activeProfile].name, connected, gyroOn, now);
+  drawTopBar("", connected, gyroOn, now);
 
   char buf[24];
   tft.drawText(UI_X, 22, "SPEED", C_MUTED, 0xFFFF, 1);
@@ -1218,11 +1254,11 @@ static void renderHome() {
 
   if (telemetry.valid && (now - telemetry.lastMs) < 800) {
     int16_t tc = telemetry.tempCx10;
-    snprintf(buf, sizeof(buf), "TEMP %d.%dC  RSSI %ddBm", tc / 10, abs(tc % 10), telemetry.rssi);
+    snprintf(buf, sizeof(buf), "TMP %d.%dC  R%d", tc / 10, abs(tc % 10), telemetry.rssi);
   } else {
-    snprintf(buf, sizeof(buf), "TEMP --.-C  NO LINK");
+    snprintf(buf, sizeof(buf), "TMP --.-C");
   }
-  tft.drawText(UI_X, 98, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(UI_X, 96, buf, C_MUTED, 0xFFFF, 1);
 
   uint32_t d = driveTimer.totalMs / 1000;
   uint32_t s = sessionTimer.totalMs / 1000;
@@ -1232,10 +1268,12 @@ static void renderHome() {
            (unsigned long)(s / 60), (unsigned long)(s % 60));
   tft.drawText(UI_X, 110, tbuf, C_MUTED, 0xFFFF, 1);
 
-  tft.drawText(UI_X, 122, "SUSP", C_MUTED, 0xFFFF, 1);
-  drawCenterBar(UI_X + 24, 124, UI_W - 24, 4, (int)uiSusp, C_ACCENT2, C_ACCENT);
-  snprintf(buf, sizeof(buf), "TRIM S%+d T%+d", cfg.trimSteer, cfg.trimThrot);
-  tft.drawText(UI_X, 134, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(UI_X, 126, "SUSP", C_MUTED, 0xFFFF, 1);
+  int suspPct = (int)((uiSusp + 1000.0f) * 100.0f / 2000.0f);
+  if (suspPct < 0) suspPct = 0;
+  if (suspPct > 100) suspPct = 100;
+  drawProgressBar(UI_X + 24, 130, UI_W - 24, 4, suspPct, 100, C_ACCENT2);
+  drawTrimBar100(UI_X, 156, UI_W, 3, cfg.trimSteer, "S");
 
   tft.present();
 }
@@ -2329,7 +2367,7 @@ void setup() {
   tft.begin();
   renderSplash();
   renderHome();
-  buzzerSelect();
+  buzzerStartup();
   advSyncFromCfg();
 
   espnowInit();
@@ -2379,6 +2417,19 @@ void loop() {
     channels[i].value = (m < 4) ? src[m] : 0;
   }
 
+  if (PIN_SW_GYRO >= 0) {
+    gyroOnState = SW_GYRO_ACTIVE_LOW ? (digitalRead(PIN_SW_GYRO) == LOW)
+                                     : (digitalRead(PIN_SW_GYRO) == HIGH);
+    if (gyroOnState != lastGyroOnState) {
+      toggleAnimUntil = millis() + 700;
+      toggleAnimOn = gyroOnState;
+      gyroTogglePulse = true;
+      if (gyroOnState) buzzerToggleOn();
+      else buzzerToggleOff();
+      lastGyroOnState = gyroOnState;
+    }
+  }
+
   // Send packet
   static uint32_t lastSendMs = 0;
   uint32_t now = millis();
@@ -2401,16 +2452,14 @@ void loop() {
     p.indMode = cfg.indMode;
     p.indManual = cfg.indManual;
     uint8_t flags = 0;
-    if (PIN_SW_GYRO >= 0) {
-      bool gyroOn = SW_GYRO_ACTIVE_LOW ? (digitalRead(PIN_SW_GYRO) == LOW)
-                                       : (digitalRead(PIN_SW_GYRO) == HIGH);
-      if (gyroOn) flags |= 0x01;
-    }
+    if (gyroOnState) flags |= 0x01;
+    if (gyroTogglePulse) flags |= 0x02;
     p.flags = flags;
     p.checksum = calcChecksum(p);
     const uint8_t *dest = ESPNOW_BROADCAST;
     if (activePeer < MAX_PEERS && peers[activePeer].valid) dest = peers[activePeer].mac;
     esp_now_send(dest, (uint8_t *)&p, sizeof(p));
+    gyroTogglePulse = false;
   }
 
   // UI
@@ -2428,5 +2477,10 @@ void loop() {
 
   // LED status
   bool connected = telemetry.valid && ((millis() - telemetry.lastMs) < 1000);
+  if (connected != lastLinkState) {
+    if (connected) buzzerLinkUp();
+    else buzzerLinkDown();
+    lastLinkState = connected;
+  }
   digitalWrite(PIN_LED_BUILTIN, connected ? LED_OFF_STATE : LED_ON_STATE);
 }
