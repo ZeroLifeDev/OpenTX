@@ -652,7 +652,7 @@ static void advActionSave();
 static void advActionReset();
 static void advActionBeep();
 
-static const char *optDriveMode[] = { "ECO", "NORM", "SPORT" };
+static const char *optDriveMode[] = { "RAW" };
 static const char *optInvert[] = { "OFF", "ON" };
 static const char *optGyro[] = { "OFF", "ON" };
 static const char *optLightMode[] = { "OFF", "LOW", "HIGH" };
@@ -672,7 +672,7 @@ static int16_t advSteerSub;
 static int16_t advThrotSub;
 
 static MenuItem advItems[] = {
-  { "DRIVE MODE", MENU_ENUM, &advDriveMode, 0, 2, 1, optDriveMode, 3, nullptr },
+  { "RAW MODE", MENU_ENUM, &advDriveMode, 0, 0, 1, optDriveMode, 1, nullptr },
   { "INV STEER", MENU_ENUM, &advInvertSteer, 0, 1, 1, optInvert, 2, nullptr },
   { "INV THROT", MENU_ENUM, &advInvertThrot, 0, 1, 1, optInvert, 2, nullptr },
   { "SEND HZ", MENU_INT, &advSendHz, 20, 60, 1, nullptr, 0, nullptr },
@@ -766,7 +766,7 @@ static void loadDefaults() {
   cfg.susp = {500, 2048, 3500};
   cfg.trimSteer = 0;
   cfg.trimThrot = 0;
-  cfg.driveMode = 1;
+  cfg.driveMode = 0;
   cfg.headlight = 1;
   cfg.taillight = 1;
   cfg.indMode = 1;
@@ -800,6 +800,9 @@ static void loadConfig() {
   activePeer = prefs.getUChar("active", 0);
   if (activePeer >= MAX_PEERS) activePeer = 0;
   prefs.end();
+
+  // Force RAW mode
+  cfg.driveMode = 0;
 
   prefs.begin("txprof", true);
   size_t gotp = prefs.getBytesLength("profiles");
@@ -1101,6 +1104,118 @@ static void drawTopBar(const char *title, bool connected, bool gyroOn, uint32_t 
   tft.drawText(badgeX + 3, 5, gyroOn ? "GYR" : "OFF", gyroOn ? C_ACCENT : C_MUTED, 0xFFFF, 1);
 
   int bars = 0;
+  if (telemetry.valid && (millis() - telemetry.lastMs) < 800) {
+    int r = telemetry.rssi;
+    if (r > -60) bars = 4;
+    else if (r > -70) bars = 3;
+    else if (r > -80) bars = 2;
+    else if (r > -90) bars = 1;
+  }
+  drawSignalBars(badgeX - 20, 4, bars, C_ACCENT2);
+
+  int maxChars = (badgeX - 10) / 8;
+  drawTitleClamped(6, 1, title, maxChars);
+}
+
+static inline void drawScreenHeader(const char *title, uint32_t now) {
+  bool connected = telemetry.valid && ((now - telemetry.lastMs) < 1000);
+  bool gyroOn = false;
+  if (PIN_SW_GYRO >= 0) {
+    gyroOn = SW_GYRO_ACTIVE_LOW ? (digitalRead(PIN_SW_GYRO) == LOW)
+                                : (digitalRead(PIN_SW_GYRO) == HIGH);
+  }
+  drawTopBar(title, connected, gyroOn, now);
+}
+
+static void drawCard(int x, int y, int w, int h, const char *title, uint16_t accent) {
+  tft.fillRect(x, y, w, h, C_PANEL);
+  tft.drawRect(x, y, w, h, C_LINE);
+  if (accent) tft.fillRect(x, y, 3, h, accent);
+  if (title) tft.drawText(x + 6, y + 2, title, C_MUTED, 0xFFFF, 1);
+}
+
+static void drawListItem(int x, int y, int w, int h, bool sel, bool edit,
+                         const char *label, const char *value, uint32_t now) {
+  uint16_t bg = C_PANEL;
+  uint16_t fg = C_TEXT;
+  if (sel) {
+    uint8_t pulse = pulse8(now, 1600);
+    uint16_t a = edit ? C_ACCENT2 : C_ACCENT;
+    uint16_t b = edit ? C_ACCENT : C_ACCENT2;
+    bg = mix565(a, b, pulse);
+    fg = C_BG_TOP;
+  }
+  tft.fillRect(x, y, w, h, bg);
+  tft.drawRect(x, y, w, h, sel ? bg : C_LINE);
+  tft.drawText(x + 6, y + 2, label, fg, 0xFFFF, 1);
+  if (value && value[0]) {
+    int vx = x + w - 6 - (int)strlen(value) * 6;
+    tft.drawText(vx, y + 2, value, fg, 0xFFFF, 1);
+  }
+}
+
+static void drawCenterBar(int x, int y, int w, int h, int v, uint16_t colPos, uint16_t colNeg) {
+  tft.fillRect(x, y, w, h, C_LINE);
+  int mid = x + w / 2;
+  tft.drawFastVLine(mid, y, h, C_PANEL2);
+  int half = w / 2;
+  int fill = (abs(v) * half) / 1000;
+  if (fill > half) fill = half;
+  if (v >= 0) tft.fillRect(mid, y, fill, h, colPos);
+  else tft.fillRect(mid - fill, y, fill, h, colNeg);
+}
+
+static void drawProgressBar(int x, int y, int w, int h, int v, int vmax, uint16_t col) {
+  tft.fillRect(x, y, w, h, C_LINE);
+  int fill = (vmax > 0) ? (v * w) / vmax : 0;
+  if (fill < 0) fill = 0;
+  if (fill > w) fill = w;
+  tft.fillRect(x, y, fill, h, col);
+}
+
+static void renderHome() {
+  uint32_t now = millis();
+  bool connected = telemetry.valid && ((now - telemetry.lastMs) < 1000);
+  bool gyroOn = false;
+  if (PIN_SW_GYRO >= 0) {
+    gyroOn = SW_GYRO_ACTIVE_LOW ? (digitalRead(PIN_SW_GYRO) == LOW)
+                                : (digitalRead(PIN_SW_GYRO) == HIGH);
+  }
+
+  uint16_t speedSrc = 0;
+  if (telemetry.valid && (now - telemetry.lastMs) < 800) {
+    speedSrc = telemetry.speedKmh;
+  } else {
+    speedSrc = 0;
+  }
+
+  uiSteer = lerpf(uiSteer, steerAxis.value, 0.2f);
+  uiThrot = lerpf(uiThrot, throtAxis.value, 0.2f);
+  uiSusp = lerpf(uiSusp, suspAxis.value, 0.2f);
+  uiSpeed = lerpf(uiSpeed, speedSrc, 0.18f);
+
+  drawBackground(now);
+  drawTopBar(profiles[activeProfile].name, connected, gyroOn, now);
+
+  char buf[24];
+  tft.drawText(UI_X, 22, "SPEED", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%u", (uint16_t)uiSpeed);
+  int tw = textWidth8x16(buf, 1);
+  int tx = UI_X + (UI_W - tw) / 2;
+  drawText8x16(tx, 34, buf, C_TEXT, 0xFFFF, 1);
+  tft.drawText(UI_X + UI_W - 30, 38, "KM/H", C_MUTED, 0xFFFF, 1);
+  drawProgressBar(UI_X, 52, UI_W, 4, (int)uiSpeed, cfg.maxKmh, C_ACCENT2);
+
+  tft.drawText(UI_X, 60, "THR", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%d%%", (int)((uiThrot * 100) / 1000));
+  tft.drawText(UI_X + UI_W - (int)strlen(buf) * 6, 60, buf, C_MUTED, 0xFFFF, 1);
+  drawCenterBar(UI_X, 70, UI_W, 4, (int)uiThrot, C_ACCENT, C_ACCENT2);
+
+  tft.drawText(UI_X, 78, "STR", C_MUTED, 0xFFFF, 1);
+  snprintf(buf, sizeof(buf), "%d%%", (int)((uiSteer * 100) / 1000));
+  tft.drawText(UI_X + UI_W - (int)strlen(buf) * 6, 78, buf, C_MUTED, 0xFFFF, 1);
+  drawCenterBar(UI_X, 88, UI_W, 4, (int)uiSteer, C_ACCENT, C_ACCENT2);
+
   if (telemetry.valid && (now - telemetry.lastMs) < 800) {
     int16_t tc = telemetry.tempCx10;
     snprintf(buf, sizeof(buf), "TEMP %d.%dC  RSSI %ddBm", tc / 10, abs(tc % 10), telemetry.rssi);
@@ -1124,7 +1239,6 @@ static void drawTopBar(const char *title, bool connected, bool gyroOn, uint32_t 
 
   tft.present();
 }
-
 static const char *mainMenuItems[] = {
   "DASHBOARD", "SETTINGS", "PAIR RX", "PROFILES", "MODEL SETUP",
   "RATES/EXPO", "OUTPUTS", "CURVES", "MIXER", "NAME EDIT",
@@ -1136,7 +1250,7 @@ static uint8_t mainMenuIndex = 0;
 static uint8_t mainMenuTop = 0;
 
 static const char *settingsItems[] = {
-  "TRIM STEER", "TRIM THROT", "DRIVE MODE", "HEADLIGHTS", "TAILLIGHTS",
+  "TRIM STEER", "TRIM THROT", "RAW MODE", "HEADLIGHTS", "TAILLIGHTS",
   "IND MODE", "IND MANUAL", "EXPO STEER", "EXPO THROT",
   "RATE STEER", "RATE THROT", "SEND HZ", "MAX KMH",
   "INV STEER", "INV THROT", "SAVE"
@@ -1207,7 +1321,7 @@ static void renderSettings() {
     const char *val = "";
     if (idx == 0) { snprintf(buf, sizeof(buf), "%d", cfg.trimSteer); val = buf; }
     else if (idx == 1) { snprintf(buf, sizeof(buf), "%d", cfg.trimThrot); val = buf; }
-    else if (idx == 2) { val = (cfg.driveMode == 0) ? "ECO" : (cfg.driveMode == 1) ? "NORM" : "SPORT"; }
+    else if (idx == 2) { val = "RAW"; }
     else if (idx == 3) { val = optLightMode[cfg.headlight % 3]; }
     else if (idx == 4) { val = optLightMode[cfg.taillight % 3]; }
     else if (idx == 5) { val = optIndMode[cfg.indMode % 3]; }
@@ -1521,7 +1635,7 @@ static void advDrawRow(int y, bool sel, const char *label, const char *value, bo
 }
 
 static void advSyncFromCfg() {
-  advDriveMode = cfg.driveMode;
+  advDriveMode = 0;
   advInvertSteer = cfg.invertSteer;
   advInvertThrot = cfg.invertThrot;
   advSendHz = cfg.sendHz;
@@ -1535,7 +1649,7 @@ static void advSyncFromCfg() {
 }
 
 static void advApplyToCfg() {
-  cfg.driveMode = (uint8_t)advDriveMode;
+  cfg.driveMode = 0;
   cfg.invertSteer = (uint8_t)advInvertSteer;
   cfg.invertThrot = (uint8_t)advInvertThrot;
   cfg.sendHz = (uint8_t)advSendHz;
@@ -1741,7 +1855,7 @@ static void handleButtons() {
     }
     if (btnTrimPlus.pressed) cfg.trimSteer = clampi(cfg.trimSteer + 1, -50, 50);
     if (btnTrimMinus.pressed) cfg.trimSteer = clampi(cfg.trimSteer - 1, -50, 50);
-    if (btnSet.pressed) cfg.driveMode = (cfg.driveMode + 1) % 3;
+    if (btnSet.pressed) cfg.driveMode = 0;
   } else if (screen == SCREEN_MENU) {
     if (btnMenu.pressed) {
       screen = SCREEN_HOME;
@@ -1844,7 +1958,7 @@ static void handleButtons() {
         int delta = 1;
         if (settingsIndex == 0) cfg.trimSteer = clampi(cfg.trimSteer + delta, -50, 50);
         else if (settingsIndex == 1) cfg.trimThrot = clampi(cfg.trimThrot + delta, -50, 50);
-        else if (settingsIndex == 2) cfg.driveMode = (cfg.driveMode + 1) % 3;
+        else if (settingsIndex == 2) cfg.driveMode = 0;
         else if (settingsIndex == 3) cfg.headlight = (cfg.headlight + 1) % 3;
         else if (settingsIndex == 4) cfg.taillight = (cfg.taillight + 1) % 3;
         else if (settingsIndex == 5) cfg.indMode = (cfg.indMode + 1) % 3;
@@ -1869,7 +1983,7 @@ static void handleButtons() {
         int delta = -1;
         if (settingsIndex == 0) cfg.trimSteer = clampi(cfg.trimSteer + delta, -50, 50);
         else if (settingsIndex == 1) cfg.trimThrot = clampi(cfg.trimThrot + delta, -50, 50);
-        else if (settingsIndex == 2) cfg.driveMode = (cfg.driveMode == 0) ? 2 : (cfg.driveMode - 1);
+        else if (settingsIndex == 2) cfg.driveMode = 0;
         else if (settingsIndex == 3) cfg.headlight = (cfg.headlight == 0) ? 2 : (cfg.headlight - 1);
         else if (settingsIndex == 4) cfg.taillight = (cfg.taillight == 0) ? 2 : (cfg.taillight - 1);
         else if (settingsIndex == 5) cfg.indMode = (cfg.indMode == 0) ? 2 : (cfg.indMode - 1);
@@ -2281,7 +2395,7 @@ void loop() {
     p.suspension = suspAxis.value;
     p.trimSteer = cfg.trimSteer;
     p.trimThrot = cfg.trimThrot;
-    p.driveMode = cfg.driveMode;
+    p.driveMode = 0;
     p.headlight = cfg.headlight;
     p.taillight = cfg.taillight;
     p.indMode = cfg.indMode;
