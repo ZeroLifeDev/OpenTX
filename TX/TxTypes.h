@@ -23,6 +23,10 @@ struct TxConfig {
   int16_t trimSteer;
   int16_t trimThrot;
   uint8_t driveMode;    // 0..2
+  uint8_t headlight;    // 0..2 off/low/high
+  uint8_t taillight;    // 0..2 off/low/high
+  uint8_t indMode;      // 0 off,1 auto,2 manual
+  uint8_t indManual;    // 0 off,1 left,2 right,3 hazard
   uint8_t expoSteer;    // 0..100
   uint8_t expoThrot;    // 0..100
   uint8_t rateSteer;    // 50..100
@@ -44,8 +48,21 @@ struct ControlPacket {
   int16_t trimSteer;
   int16_t trimThrot;
   uint8_t driveMode;
+  uint8_t headlight;
+  uint8_t taillight;
+  uint8_t indMode;
+  uint8_t indManual;
   uint8_t flags;
   uint8_t checksum;
+};
+
+struct TelemetryPacket {
+  uint16_t magic;
+  uint8_t version;
+  uint8_t flags;
+  uint16_t speedKmh;
+  int8_t rssi;
+  int16_t tempCx10;
 };
 
 struct RateExpo {
