@@ -86,9 +86,9 @@ static inline void menuRender(const MenuPage &page, uint8_t index, uint8_t top, 
                               MenuDrawTitleFn drawTitle, MenuDrawRowFn drawRow) {
   drawTitle(page.title);
   if (index < top) top = index;
-  if (index > top + 7) top = index - 7;
+  if (index > top + 6) top = index - 6;
   char buf[12];
-  for (uint8_t i = 0; i < 8; i++) {
+  for (uint8_t i = 0; i < 7; i++) {
     uint8_t idx = top + i;
     if (idx >= page.count) break;
     const MenuItem &it = page.items[idx];
