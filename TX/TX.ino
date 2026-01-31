@@ -640,19 +640,19 @@ static int calMin = 4095, calMax = 0;
 // --------------------------
 // Colors
 // --------------------------
-static const uint16_t C_BG_TOP = rgb565(10, 12, 16);
-static const uint16_t C_BG_BOT = rgb565(18, 20, 28);
-static const uint16_t C_PANEL = rgb565(20, 22, 30);
-static const uint16_t C_PANEL2 = rgb565(28, 32, 42);
-static const uint16_t C_LINE = rgb565(52, 58, 72);
-static const uint16_t C_ACCENT = rgb565(0, 190, 255);
-static const uint16_t C_ACCENT2 = rgb565(255, 196, 64);
-static const uint16_t C_TEXT = rgb565(232, 236, 242);
-static const uint16_t C_MUTED = rgb565(140, 150, 165);
-static const uint16_t C_WARN = rgb565(255, 90, 90);
-static const uint16_t C_SHADOW = rgb565(6, 7, 10);
-static const uint16_t C_HILITE = rgb565(72, 80, 96);
-static const uint16_t C_GLOW = rgb565(120, 220, 255);
+static const uint16_t C_BG_TOP = rgb565(3, 8, 22);
+static const uint16_t C_BG_BOT = rgb565(6, 12, 32);
+static const uint16_t C_PANEL = rgb565(10, 18, 42);
+static const uint16_t C_PANEL2 = rgb565(14, 24, 56);
+static const uint16_t C_LINE = rgb565(28, 44, 78);
+static const uint16_t C_ACCENT = rgb565(0, 210, 255);
+static const uint16_t C_ACCENT2 = rgb565(255, 214, 90);
+static const uint16_t C_TEXT = rgb565(232, 238, 248);
+static const uint16_t C_MUTED = rgb565(136, 150, 176);
+static const uint16_t C_WARN = rgb565(255, 90, 110);
+static const uint16_t C_SHADOW = rgb565(2, 4, 10);
+static const uint16_t C_HILITE = rgb565(40, 66, 110);
+static const uint16_t C_GLOW = rgb565(120, 230, 255);
 
 static void advActionSave();
 static void advActionReset();
@@ -1240,7 +1240,6 @@ static void renderHome() {
   int tx = UI_X + (UI_W - tw) / 2;
   drawText8x16(tx, 34, buf, C_TEXT, 0xFFFF, 1);
   tft.drawText(UI_X + UI_W - 30, 38, "KM/H", C_MUTED, 0xFFFF, 1);
-  drawProgressBar(UI_X, 52, UI_W, 4, (int)uiSpeed, cfg.maxKmh, C_ACCENT2);
 
   tft.drawText(UI_X, 60, "THR", C_MUTED, 0xFFFF, 1);
   snprintf(buf, sizeof(buf), "%d%%", (int)((uiThrot * 100) / 1000));
