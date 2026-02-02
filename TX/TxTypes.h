@@ -2,6 +2,7 @@
 #define TX_TYPES_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 struct AxisCal {
   int16_t min;
@@ -37,6 +38,7 @@ struct TxConfig {
   uint16_t maxKmh;      // speed scale
 };
 
+#pragma pack(push, 1)
 struct ControlPacket {
   uint16_t magic;
   uint8_t version;
@@ -64,6 +66,7 @@ struct TelemetryPacket {
   int8_t rssi;
   int16_t tempCx10;
 };
+#pragma pack(pop)
 
 struct RateExpo {
   uint8_t rate;

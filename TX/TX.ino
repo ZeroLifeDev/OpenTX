@@ -19,8 +19,8 @@
 struct RateExpo;
 
 // --------------------------
-// Build-time configuration
 // --------------------------
+// Build-time configuration
 #define TFT_W 128
 #define TFT_H 160
 #define TFT_BGR 1           // 1 if your colors look swapped (BGR panels)
@@ -945,7 +945,8 @@ static int processAxis(AxisState &st, int raw, const AxisCal &cal, int16_t trim,
 static uint8_t calcChecksum(const ControlPacket &p) {
   const uint8_t *b = (const uint8_t *)&p;
   uint8_t c = 0;
-  for (size_t i = 0; i < sizeof(ControlPacket) - 1; i++) c ^= b[i];
+  const size_t len = offsetof(ControlPacket, checksum);
+  for (size_t i = 0; i < len; i++) c ^= b[i];
   return c;
 }
 
